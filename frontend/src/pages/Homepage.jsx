@@ -9,7 +9,7 @@ const HomePage = () => {
       <header style={styles.header}>
         <h1 style={styles.logo}>Shulehub</h1>
         <div style={styles.buttonGroup}>
-          <button style={styles.button} onClick={() => navigate('/auth/login')}>
+          <button style={styles.button} onClick={() => navigate('/login')}>
             Login
           </button>
           <button style={styles.button} onClick={() => navigate('/register')}>

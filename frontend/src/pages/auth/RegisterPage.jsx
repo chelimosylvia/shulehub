@@ -246,7 +246,7 @@ const SchoolRegistrationForm = () => {
                 Register Another School
               </button>
               <Link 
-                to="/auth/login" 
+                to="/login" 
                 className="btn btn-primary" 
                 style={{ marginLeft: '1rem' }}
               >

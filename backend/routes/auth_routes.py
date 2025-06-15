@@ -2,8 +2,8 @@ import random
 import string
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, create_access_token, get_jwt_identity
-from werkzeug.security import generate_password_hash
+from flask_jwt_extended import jwt_required, create_access_token, get_jwt_identity, decode_token, verify_jwt_in_request
+from werkzeug.security import generate_password_hash, check_password_hash
 from models import School, User
 from extensions import db
 import traceback
@@ -18,92 +18,163 @@ def generate_default_password(length=8):
 
 @auth_bp.route('/school-admin/login', methods=['POST'])
 def school_admin_login():
-    """Login route for school administrators using email, school_code and registration_number"""
+    """Login using school credentials (no password)"""
     try:
         data = request.get_json()
         
-        # Required fields
-        email = data.get('email', '').strip()
-        school_code = data.get('school_code', '').strip()
-        registration_number = data.get('registration_number', '').strip()
-        
-        if not email or not school_code or not registration_number:
-            return jsonify({'error': 'Email, school code, and registration number are required'}), 400
-        
-        # Find the school
+        # Normalize input
+        email = (data.get('email') or '').strip().lower()
+        school_code = (data.get('school_code') or data.get('schoolCode') or '').strip()
+        reg_number = (data.get('registration_number') or data.get('registrationNumber') or '').strip()
+
+        # Validate presence
+        if not all([email, school_code, reg_number]):
+            return jsonify({'error': 'All credentials are required'}), 400
+
+        # Find active school
         school = School.query.filter_by(
             school_code=school_code,
-            registration_number=registration_number,
+            registration_number=reg_number,
             is_active=True
         ).first()
-        
+
         if not school:
             return jsonify({'error': 'Invalid school credentials'}), 401
-        
-        # Check if a school admin with the given email exists for this school
-        school_admin = User.query.filter_by(
+
+        # Verify email matches school
+        if school.email.lower() != email.lower():
+            return jsonify({'error': 'Email does not match school records'}), 401
+
+        # Find admin user
+        admin_user = User.query.filter_by(
             email=email,
             school_id=school.id,
             role='school_admin',
             is_active=True
         ).first()
-        
-        if not school_admin:
-            return jsonify({'error': 'No active school admin found for this email and school'}), 404
-        
-        # Generate access token for the school admin
-        access_token = create_access_token(identity=school_admin.id)
-        
+
+        if not admin_user:
+            return jsonify({'error': 'No admin account found'}), 404
+
+        # Generate token
+        access_token = create_access_token(
+            identity=str(admin_user.id),
+            additional_claims={
+                'school_id': school.id,
+                'role': 'school_admin',
+                'is_owner': school.owner_id == admin_user.id
+            }
+        )
+
         return jsonify({
-            'message': 'School admin login successful',
+            'message': 'Login successful',
             'access_token': access_token,
-            'user': school_admin.to_dict(),
+            'user': admin_user.to_dict(),
             'school': school.to_dict()
         }), 200
-            
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': 'Login failed', 'details': str(e)}), 500
+
+@auth_bp.route('/user/login', methods=['POST'])
+def user_login():
+    """Login route for regular users (teachers, students) using email and password"""
+    try:
+        data = request.get_json()
+        
+        email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
+
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
+
+        # Check user exists
+        user = User.query.filter_by(email=email, is_active=True).first()
+        if not user:
+            return jsonify({'error': 'Invalid email or password'}), 401
+        
+        # Check if user has a password (school admins don't need passwords)
+        if user.role == 'school_admin':
+            return jsonify({'error': 'School admins should use the school admin login endpoint'}), 400
+        
+        # Verify password
+        if not user.password_hash or not check_password_hash(user.password_hash, password):
+            return jsonify({'error': 'Invalid email or password'}), 401
+
+        # Create token
+        access_token = create_access_token(
+            identity=str(user.id), 
+            additional_claims={'school_id': user.school_id}
+        )
+
+        return jsonify({
+            'message': f'{user.role.capitalize()} login successful',
+            'access_token': access_token,
+            'user': user.to_dict()
+        }), 200
+        
     except Exception as e:
         db.session.rollback()
         traceback.print_exc()
         return jsonify({'error': 'Login failed', 'details': str(e)}), 500
 
-@auth_bp.route('/login', methods=['POST'])
-def user_login():
-    """General login route for all users (students, teachers, existing school_admins)"""
+@auth_bp.route('/verify', methods=['POST'])
+def verify_token():
+    # Try header-based JWT first
     try:
-        data = request.get_json()
+        verify_jwt_in_request()  # raises if token is missing/invalid
+        current_user_id = get_jwt_identity()  # This is the user ID as string
         
-        email = data.get('email', '').strip().lower()
-        password = data.get('password', '').strip()
+        # Get additional claims
+        from flask_jwt_extended import get_jwt
+        claims = get_jwt()
+        school_id = claims.get('school_id')
         
-        if not email or not password:
-            return jsonify({'error': 'Email and password are required'}), 400
-        
-        # Find the user
-        user = User.query.filter_by(email=email, is_active=True).first()
-        
-        if not user or not user.check_password(password):
-            return jsonify({'error': 'Invalid email or password'}), 401
-        
-        # Generate access token
-        access_token = create_access_token(identity=user.id)
-        
-        # Get school info if user belongs to a school
-        school_info = None
-        if user.school_id:
-            school = School.query.get(user.school_id)
-            if school:
-                school_info = school.to_dict()
-        
+        user = User.query.get(current_user_id)
+        if not user:
+            return jsonify({'valid': False}), 401
+
         return jsonify({
-            'message': 'Login successful',
-            'access_token': access_token,
+            'valid': True,
             'user': user.to_dict(),
-            'school': school_info
+            'school_id': school_id
         }), 200
-        
+
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({'error': 'Login failed', 'details': str(e)}), 500
+        print('Header token error:', e)
+
+    # Fallback: check body
+    data = request.get_json()
+    if not data or 'token' not in data:
+        return jsonify({'error': 'Token required'}), 422
+
+    try:
+        decoded = decode_token(data['token'])
+        sub = decoded.get('sub')
+        claims = decoded.get('claims', {})
+        school_id = claims.get('school_id')
+
+        user = User.query.get(sub)
+        if not user:
+            return jsonify({'valid': False}), 401
+
+        return jsonify({
+            'valid': True,
+            'user': user.to_dict(),
+            'school_id': school_id
+        }), 200
+
+    except Exception as e:
+        return jsonify({'valid': False, 'error': str(e)}), 401
+
+@auth_bp.route('/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    jti = get_jwt()["jti"]
+    # Add to blacklist if using token invalidation
+    return jsonify({'message': 'Logged out successfully'}), 200
+
 
 @auth_bp.route('/users', methods=['POST'])
 @jwt_required()

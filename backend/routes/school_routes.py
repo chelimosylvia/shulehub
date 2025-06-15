@@ -3,7 +3,7 @@ import string
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from models import School, User
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 import traceback
 
@@ -49,86 +49,67 @@ def is_valid_county(county):
 school_bp = Blueprint('schools', __name__, url_prefix='/api/schools')
 @school_bp.route('', methods=['POST'])
 def create_school():
-    """Register a new school - No authentication required"""
+    """Register a new school with admin account"""
     try:
         data = request.get_json()
 
-        # Required fields
+        # Validate required fields
         required_fields = ['name', 'email', 'phone', 'address', 'county', 'school_type']
         for field in required_fields:
             if not data.get(field, '').strip():
                 return jsonify({'error': f'{field.capitalize()} is required'}), 400
 
-        name = data['name'].strip()
+        # Process data
         email = data['email'].strip().lower()
-        phone = data['phone'].strip()
-        address = data['address'].strip()
+        name = data['name'].strip()
         county = data['county'].strip()
         school_type = data['school_type'].strip().lower()
 
-        # Validate county
+        # Validate inputs
         if not is_valid_county(county):
-            return jsonify({'error': 'Invalid county. Please select a valid Kenyan county'}), 400
-
-        # Validate school_type
-        valid_school_types = ['public', 'private', 'international']
-        if school_type not in valid_school_types:
-            return jsonify({'error': 'Invalid school type. Must be public, private, or international'}), 400
-
-        # Uniqueness checks
+            return jsonify({'error': 'Invalid county'}), 400
+        if school_type not in ['public', 'private', 'international']:
+            return jsonify({'error': 'Invalid school type'}), 400
         if School.query.filter_by(email=email).first():
-            return jsonify({'error': 'Email already in use by another school'}), 409
+            return jsonify({'error': 'Email already registered'}), 409
+        if School.query.filter_by(name=name, county=county).first():
+            return jsonify({'error': 'School exists in this county'}), 409
 
-        if School.query.filter_by(name=name, county=county, is_active=True).first():
-            return jsonify({'error': 'A school with this name already exists in this county'}), 409
-
-        # Generate identifiers
+        # Generate unique identifiers
         school_code = generate_school_code()
         registration_number = generate_registration_number()
 
-        # Optional fields
-        description = data.get('description', '').strip()
-        website = data.get('website', '').strip()
-        established_year = data.get('established_year')
-
-        if established_year:
-            try:
-                established_year = int(established_year)
-                current_year = datetime.utcnow().year
-                if established_year < 1800 or established_year > current_year:
-                    return jsonify({'error': 'Invalid established year'}), 400
-            except (ValueError, TypeError):
-                return jsonify({'error': 'Established year must be a valid number'}), 400
-        else:
-            established_year = None
-
-        # Leave owner_id as None for self-registered schools
-        # Schools can claim ownership later through proper authentication
-
-        # Create school object
+        # Create school
         new_school = School(
-            owner_id=None,  # Allow NULL for self-registered schools
             name=name,
             email=email,
-            phone=phone,
-            address=address,
+            phone=data['phone'].strip(),
+            address=data['address'].strip(),
             county=county,
             school_type=school_type,
-            description=description,
-            website=website,
-            established_year=established_year,
             school_code=school_code,
             registration_number=registration_number,
-            level='high school',
-            is_verified=False,
-            is_active=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            is_active=True
         )
-
-        print("Creating new school:", new_school)
-
         db.session.add(new_school)
+        db.session.flush()
+
+        # Create admin user (without password)
+        admin_user = User(
+            email=email,
+            first_name=data.get('admin_first_name', 'School').strip() or 'School',
+            last_name=data.get('admin_last_name', 'Admin').strip() or 'Admin',
+            phone=data['phone'].strip(),
+            role='school_admin',
+            school_id=new_school.id,
+            is_active=True,
+            password_hash=None  # No password needed
+        )
+        db.session.add(admin_user)
+        db.session.flush()
+
+        # Set school owner
+        new_school.owner_id = admin_user.id
         db.session.commit()
 
         return jsonify({
@@ -138,69 +119,78 @@ def create_school():
                 'email': email,
                 'school_code': school_code,
                 'registration_number': registration_number,
-                'instructions': 'Use these credentials to login as School Administrator at /auth/login with role=school_admin'
+                'instructions': 'Use these credentials to login at /api/auth/school-admin/login'
             }
         }), 201
 
     except Exception as e:
         db.session.rollback()
         traceback.print_exc()
-        return jsonify({'error': 'School registration failed', 'details': str(e)}), 500
-
-
-def get_or_create_system_owner():
-    """Get or create a system user to own self-registered schools"""
-    from models import User  # Import your User model
-    
-    system_email = "system@shulehub.com"
-    system_owner = User.query.filter_by(email=system_email).first()
-    
-    if not system_owner:
-        system_owner = User(
-            email=system_email,
-            first_name="System",
-            last_name="Owner",
-            role="admin",  # Use admin role for system owner
-            password_hash="system_generated_hash"  # Placeholder password hash
-        )
-        # Set a proper password hash for security
-        system_owner.set_password("SystemOwner2025!")  # This will be overridden by set_password
-        
-        db.session.add(system_owner)
-        db.session.flush()  # Get the ID without committing
-    
-    return system_owner
-
-
-# Get all active schools with county filter
-@school_bp.route('', methods=['GET'])
+        return jsonify({'error': 'Registration failed', 'details': str(e)}), 500
+# school_route.py
+# school_route.py
+@school_bp.route('/<int:school_id>', methods=['GET'])
 @jwt_required()
-def get_schools():
+def get_school(school_id):
+    """Get school details by ID"""
     try:
-        county_filter = request.args.get('county')
+        current_user = get_jwt_identity()
         
-        query = School.query.filter_by(is_active=True)
-        
-        if county_filter:
-            query = query.filter_by(county=county_filter)
+        # Verify we got a proper JWT identity
+        if not isinstance(current_user, dict):
+            return jsonify({'error': 'Invalid token format'}), 401
             
-        schools = query.all()
-        return jsonify({'schools': [school.to_dict() for school in schools]}), 200
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch schools', 'details': str(e)}), 500
-
-# Get school by code
-@school_bp.route('/code/<string:school_code>', methods=['GET'])
-@jwt_required()
-def get_school_by_code(school_code):
-    try:
-        school = School.query.filter_by(school_code=school_code, is_active=True).first()
+        # Verify access
+        if current_user.get('school_id') != school_id and current_user.get('role') != 'system_owner':
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        school = School.query.get(school_id)
         if not school:
             return jsonify({'error': 'School not found'}), 404
-            
-        return jsonify({'school': school.to_dict()}), 200
+        
+        # Ensure we return proper JSON
+        return jsonify({
+            'id': school.id,
+            'name': school.name,
+            'logo_url': school.logo_url,
+            'contact_info': school.contact_info,
+            'primary_color': school.primary_color,
+            'secondary_color': school.secondary_color
+        })
+        
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch school', 'details': str(e)}), 500
+        # Log the full error
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Update school details (only school admin or system admin)
 @school_bp.route('/<int:school_id>', methods=['PUT'])

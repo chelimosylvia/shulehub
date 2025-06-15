@@ -15,7 +15,7 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = False
     
     # CORS settings
-    CORS_ORIGINS = ['http://localhost:5174', 'http://127.0.0.1:5174']
+    CORS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
     
     # File upload settings
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, School, Users, Loader2 } from 'lucide-react';
 import './LoginPage.css';
 
@@ -9,6 +9,7 @@ const LoginPage = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const navigate = useNavigate();
   
   // Form states
   const [adminForm, setAdminForm] = useState({
@@ -22,42 +23,43 @@ const LoginPage = () => {
     password: ''
   });
 
-  const API_BASE_URL = 'http://localhost:5000/api'; // Update this with your API URL
+  const API_BASE_URL = 'http://localhost:5000/api';
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     setSuccess('');
-
+  
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/school-admin/login`, {
+      const response = await fetch("http://localhost:5000/api/auth/school-admin/login", {  
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           email: adminForm.email,
-          school_code: adminForm.schoolCode,
-          registration_number: adminForm.registrationNumber
-        })        
+          school_code: adminForm.schoolCode,       // Changed to snake_case
+          registration_number: adminForm.registrationNumber  
+        })      
       });
-
+  
       const data = await response.json();
-
+  
       if (response.ok) {
+        // ✅ Log the response to check the school ID
+        console.log('Login data:', data);
+        console.log('Redirecting to dashboard:', data.school?.id); // 👈 HERE
+  
         // Store authentication data
         localStorage.setItem('access_token', data.access_token);
         localStorage.setItem('user_data', JSON.stringify(data.user));
         localStorage.setItem('school_data', JSON.stringify(data.school));
-
+  
         setSuccess('Login successful! Redirecting to dashboard...');
-        
-        // Simulate navigation - replace with your routing logic
-        setTimeout(() => {
-          console.log('Redirecting to admin dashboard...');
-          // window.location.href = '/admin/dashboard'; // or use your router
-        }, 1500);
+  
+        // ✅ Redirect to dashboard
+        navigate(`/school/${data.school.id}/dashboard`);
       } else {
         setError(data.error || 'Login failed. Please check your credentials.');
       }
@@ -67,7 +69,7 @@ const LoginPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  };  
 
   const handleUserLogin = async (e) => {
     e.preventDefault();
@@ -76,7 +78,7 @@ const LoginPage = () => {
     setSuccess('');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      const response = await fetch(`${API_BASE_URL}/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -99,19 +101,14 @@ const LoginPage = () => {
 
         setSuccess('Login successful! Redirecting...');
         
-        // Simulate navigation based on role - replace with your routing logic
-        setTimeout(() => {
-          if (data.user.role === 'teacher') {
-            console.log('Redirecting to teacher dashboard...');
-            // window.location.href = '/teacher/dashboard';
-          } else if (data.user.role === 'student') {
-            console.log('Redirecting to student dashboard...');
-            // window.location.href = '/student/dashboard';
-          } else {
-            console.log('Redirecting to default dashboard...');
-            // window.location.href = '/dashboard';
-          }
-        }, 1500);
+        // Redirect based on role
+        if (data.user.role === 'teacher') {
+          navigate('/teacher/dashboard');
+        } else if (data.user.role === 'student') {
+          navigate('/student/dashboard');
+        } else {
+          navigate('/dashboard');
+        }
       } else {
         setError(data.error || 'Login failed. Please check your credentials.');
       }
@@ -134,21 +131,20 @@ const LoginPage = () => {
   };
 
   const handleRegisterClick = () => {
-    console.log('Navigate to registration page');
-    // Replace with your routing logic
-    // navigate('/auth/register');
+    navigate('/register');
   };
 
   // Demo data filler (remove in production)
   const fillDemoData = () => {
     if (activeTab === 'admin') {
       setAdminForm({
+        email: 'admin@school.com',
         schoolCode: 'AB123456',
         registrationNumber: 'REG-20250613-1234'
       });
     } else {
       setUserForm({
-        email: 'student@example.com',
+        email: 'student@school.com',
         password: 'demo123'
       });
     }
@@ -347,9 +343,12 @@ const LoginPage = () => {
         <div className="registration-section">
           <p className="registration-text">
             Don't have a school account?{' '}
-            <Link to="/register" className="registration-link">
-                 Register Your School
-            </Link>
+            <button
+              onClick={handleRegisterClick}
+              className="registration-link"
+            >
+              Register Your School
+            </button>
           </p>
         </div>
       </div>

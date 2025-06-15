@@ -9,7 +9,7 @@ class User(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=True)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
     phone = db.Column(db.String(20))
@@ -18,12 +18,15 @@ class User(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    #Relationships
 
     schools = db.relationship('School', backref='owner', lazy=True, foreign_keys='School.owner_id')
     enrollments = db.relationship('Enrollment', backref='user', lazy=True)
     classes_teaching = db.relationship('SchoolClass', backref='class_teacher', lazy=True, foreign_keys='SchoolClass.teacher_id')
     grade_entries = db.relationship('GradeEntry', backref='student', lazy=True, foreign_keys='GradeEntry.student_id')
     notifications = db.relationship('Notification', backref='user', lazy=True)
+    dashboard_preferences = db.relationship('UserDashboardPreferences', backref='user', uselist=False, cascade='all, delete-orphan')
+    activities = db.relationship('Activity', backref='user', lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -73,6 +76,8 @@ class School(db.Model):
     classes = db.relationship('SchoolClass', backref='school', lazy=True, cascade='all, delete-orphan')
     resources = db.relationship('Resource', backref='school', lazy=True, cascade='all, delete-orphan')
     sessions = db.relationship('ClassroomSession', backref='school', lazy=True, cascade='all, delete-orphan')
+    dashboard_settings = db.relationship('SchoolDashboardSettings', backref='school', uselist=False, cascade='all, delete-orphan')
+    announcements = db.relationship('SchoolAnnouncement', backref='school', lazy=True)
 
     def to_dict(self):
         return {
@@ -111,6 +116,11 @@ class SchoolClass(db.Model):
     teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'))
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    logo_url = db.Column(db.String(255))
+    primary_color = db.Column(db.String(7), default='#3f51b5')  # Hex color
+    secondary_color = db.Column(db.String(7), default='#ff4081')
+    enabled_modules = db.Column(db.JSON, default=['attendance', 'grades', 'calendar'])
+    dashboard_config = db.Column(db.JSON)  
 
     enrollments = db.relationship('Enrollment', backref='school_class', lazy=True)
 
@@ -270,3 +280,163 @@ class AssessmentResult(db.Model):
     recorded_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     student = db.relationship('User')
+
+class SchoolDashboardSettings(db.Model):
+    __tablename__ = 'school_dashboard_settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False, unique=True)
+    
+    # Branding settings
+    primary_color = db.Column(db.String(7), default='#3B82F6')
+    secondary_color = db.Column(db.String(7), default='#10B981')
+    logo_url = db.Column(db.String(255))
+    
+    # Module settings (JSON field)
+    enabled_modules = db.Column(db.JSON, default=lambda: {
+        'attendance': True,
+        'fees': True,
+        'grades': True,
+        'events': True,
+        'announcements': True,
+        'library': False,
+        'transport': False
+    })
+    
+    # Dashboard configuration
+    dashboard_config = db.Column(db.JSON, default=lambda: {
+        'default_widgets': [
+            'stats_overview',
+            'enrollment_chart',
+            'attendance_overview',
+            'activity_feed',
+            'quick_actions'
+        ],
+        'layout_templates': ['default', 'compact', 'detailed']
+    })
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'school_id': self.school_id,
+            'primary_color': self.primary_color,
+            'secondary_color': self.secondary_color,
+            'logo_url': self.logo_url,
+            'enabled_modules': self.enabled_modules,
+            'dashboard_config': self.dashboard_config
+        }
+
+class UserDashboardPreferences(db.Model):
+    __tablename__ = 'user_dashboard_preferences'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    
+    # Widget preferences
+    enabled_widgets = db.Column(db.JSON, default=lambda: {
+        'stats_overview': True,
+        'enrollment_chart': True,
+        'attendance_overview': True,
+        'activity_feed': True,
+        'quick_actions': True,
+        'fee_status': True,
+        'announcements': True,
+        'custom_links': False
+    })
+    
+    # Layout configuration
+    layout_config = db.Column(db.JSON, default=lambda: {
+        'widget_positions': {},
+        'layout_template': 'default',
+        'sidebar_collapsed': False
+    })
+    
+    # Notification preferences
+    notification_settings = db.Column(db.JSON, default=lambda: {
+        'email_notifications': True,
+        'browser_notifications': True,
+        'activity_notifications': True
+    })
+    
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'user_id': self.user_id,
+            'enabled_widgets': self.enabled_widgets,
+            'layout_config': self.layout_config,
+            'notification_settings': self.notification_settings
+        }
+
+class Activity(db.Model):
+    __tablename__ = 'activities'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    activity_type = db.Column(db.String(50), nullable=False)  # enrollment, attendance, fee, grade, etc.
+    description = db.Column(db.Text, nullable=False)
+    activity_data = db.Column(db.JSON)  # Changed from 'metadata' to 'activity_data'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'activity_type': self.activity_type,
+            'description': self.description,
+            'user': self.user.full_name if self.user else 'System',
+            'metadata': self.activity_data,  # Still returns 'metadata' in API response
+            'created_at': self.created_at.isoformat(),
+            'time_ago': self.get_time_ago()
+        }
+    
+    def get_time_ago(self):
+        """Calculate human-readable time difference"""
+        from datetime import datetime
+        diff = datetime.utcnow() - self.created_at
+        
+        if diff.days > 0:
+            return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            return "Just now"
+
+class SchoolAnnouncement(db.Model):
+    __tablename__ = 'school_announcements'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    priority = db.Column(db.Enum('low', 'medium', 'high', 'urgent', name='announcement_priority'), default='medium')
+    target_audience = db.Column(db.JSON, default=lambda: ['all'])  # ['all', 'teachers', 'students', 'parents']
+    is_published = db.Column(db.Boolean, default=False)
+    publish_date = db.Column(db.DateTime)
+    expiry_date = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    author = db.relationship('User', backref='announcements')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content,
+            'priority': self.priority,
+            'target_audience': self.target_audience,
+            'author': self.author.full_name,
+            'is_published': self.is_published,
+            'publish_date': self.publish_date.isoformat() if self.publish_date else None,
+            'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
+            'created_at': self.created_at.isoformat()
+        }

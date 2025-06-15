@@ -30,7 +30,7 @@ def create_app():
     
     # ✅ CORS Configuration - More permissive for development
     CORS(app, 
-         origins=["http://localhost:5174", "http://127.0.0.1:5174"], 
+         origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
          supports_credentials=True,
          allow_headers=["Content-Type", "Authorization"],
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
@@ -61,8 +61,9 @@ def create_app():
         ('routes.resource_routes', 'resource_bp', '/api/resources'),
         ('routes.classroom_routes', 'classroom_bp', '/api/classrooms'),
         ('routes.gradebook_routes', 'gradebook_bp', '/api/gradebook'),
-        ('routes.admin_routes', 'admin_bp', '/api/admin'),
         ('routes.mobile_routes', 'mobile_bp', '/api/mobile'),
+        ('routes.dashboard_routes', 'dashboard_bp', '/api/schools'),
+
     ]
     
     for module_name, blueprint_name, url_prefix in route_modules:
@@ -94,7 +95,7 @@ def create_app():
         from flask import request
         if request.method == "OPTIONS":
             res = app.make_default_options_response()
-            res.headers['Access-Control-Allow-Origin'] = 'http://localhost:5174'
+            res.headers['Access-Control-Allow-Origin'] = 'http://localhost:5173'
             res.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
             res.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
             res.headers['Access-Control-Allow-Credentials'] = 'true'
@@ -127,10 +128,15 @@ def create_app():
 # Create app instance for Flask CLI
 app = create_app()
 
+with app.app_context():
+    print("\n📋 Registered Routes:")
+    for rule in app.url_map.iter_rules():
+        print(f"{rule.methods} {rule.rule}")
+
 if __name__ == "__main__":
     # Add more detailed startup info
     print("🔥 Starting Flask development server...")
-    print("📍 Frontend should be running on: http://localhost:5174")
+    print("📍 Frontend should be running on: http://localhost:5173")
     print("📍 Backend running on: http://localhost:5000")
     print("🔧 Debug mode: ON")
     
