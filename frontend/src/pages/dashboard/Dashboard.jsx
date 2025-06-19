@@ -4,8 +4,9 @@ import { jwtDecode } from 'jwt-decode';
 import { 
   Users, BookOpen, Calendar, TrendingUp, DollarSign, UserCheck, Bell,
   Settings, LogOut, Edit3, Save, X, Eye, EyeOff, Grid, BarChart3,
-  PieChart as PieChartIcon, Activity, Upload, Palette, Layout, Plus
+  PieChart as PieChartIcon, Activity, Upload, Palette, Layout, Plus, UserPlus, Bookmark
 } from 'lucide-react';
+import Select from 'react-select';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart as RechartsPieChart, Cell, Pie } from 'recharts';
 import './Dashboard.css';
 
@@ -304,31 +305,635 @@ const MultiSchoolDashboard = () => {
     </div>
   );
 
-  const QuickActions = () => (
-    <div className="quick-actions">
-      <h3>Quick Actions</h3>
-      <div className="action-buttons">
-        <button className="action-btn">
-          <Users size={18} />
-          <p>Add Student</p>
-        </button>
-        <button className="action-btn">
-          <BookOpen size={18} />
-          <p>Create Class</p>
-        </button>
-        {dashboardSettings.enabled_modules.events && (
-          <button className="action-btn">
-            <Calendar size={18} />
-            <p>Schedule Event</p>
+  const QuickActions = () => {
+    const [showAddModal, setShowAddModal] = useState(false);
+    const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+    const [userType, setUserType] = useState('student'); // 'student' or 'teacher'
+  
+    const handleAddClick = (type) => {
+      setUserType(type);
+      setShowAddModal(true);
+    };
+  
+    // Add null checks for dashboardSettings
+    if (!dashboardSettings || !dashboardSettings.enabled_modules) {
+      return (
+        <div className="quick-actions">
+          <h3>Quick Actions</h3>
+          <div className="loading-actions">Loading quick actions...</div>
+        </div>
+      );
+    }
+  
+    return (
+      <div className="quick-actions">
+        <h3>Quick Actions</h3>
+        <div className="action-buttons">
+          <button 
+            className="action-btn"
+            onClick={() => handleAddClick('student')}
+          >
+            <Users size={18} />
+            <p>Add Student</p>
           </button>
+          <button 
+            className="action-btn"
+            onClick={() => handleAddClick('teacher')}
+          >
+            <UserPlus size={18} />
+            <p>Add Teacher</p>
+          </button>
+          <button className="action-btn">
+            <BookOpen size={18} />
+            <p>Create Class</p>
+          </button>
+          <button 
+            className="action-btn"
+            onClick={() => setShowAddSubjectModal(true)}
+          >
+            <Bookmark size={18} />
+            <p>Add Subject</p>
+          </button>
+          {dashboardSettings.enabled_modules.events && (
+            <button className="action-btn">
+              <Calendar size={18} />
+              <p>Schedule Event</p>
+            </button>
+          )}
+        </div>
+  
+        {showAddModal && (
+          <AddUserModal 
+            userType={userType}
+            schoolId={school.id}
+            onClose={() => setShowAddModal(false)}
+          />
         )}
-        <button className="action-btn">
-          <BarChart3 size={18} />
-          <p>View Reports</p>
-        </button>
+  
+        {showAddSubjectModal && (
+          <AddSubjectModal
+            schoolId={school.id}
+            onClose={() => setShowAddSubjectModal(false)}
+            onSubjectAdded={() => {
+              setShowAddSubjectModal(false);
+              // You might want to refresh subjects list here if needed
+            }}
+          />
+        )}
+      </div>
+    );
+  };
+  const PasswordDisplayModal = ({ open, onClose, userData }) => {
+    return (
+      <Dialog open={open} onClose={onClose}>
+        <DialogTitle>
+          <Box display="flex" alignItems="center">
+            <CheckCircle color="success" sx={{ mr: 1 }} />
+            User Created Successfully
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" gutterBottom>
+            {userData.role === 'student' ? 'Student' : 'Teacher'} {userData.first_name} {userData.last_name} has been created.
+          </Typography>
+          
+          <Typography variant="body1" gutterBottom>
+            <strong>Temporary Password:</strong>
+          </Typography>
+          
+          <Box 
+            sx={{
+              p: 2,
+              my: 2,
+              bgcolor: '#f5f5f5',
+              borderRadius: 1,
+              textAlign: 'center',
+              fontSize: '1.2rem',
+              fontWeight: 'bold'
+            }}
+          >
+            {userData.temporary_password}
+          </Box>
+          
+          <Typography variant="body2" color="textSecondary" gutterBottom>
+            Please provide this password to the user. They will be required to change it on first login.
+          </Typography>
+          
+          <Box mt={2} display="flex" justifyContent="flex-end">
+            <Button 
+              variant="contained" 
+              color="primary" 
+              onClick={onClose}
+            >
+              Close
+            </Button>
+          </Box>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+  
+  const AddUserModal = ({ userType, schoolId, onClose }) => {
+    const [formData, setFormData] = useState({
+      first_name: '',
+      last_name: '',
+      ...(userType === 'student' ? { 
+        admission_number: '',
+        grade_level: '' 
+      } : { 
+        email: '',
+        phone_number: '',
+        teacher_id: '', // Changed from tsc_number
+        subjects: []   // Changed from single subject to array
+      })
+    });
+    
+    const [subjectsOptions, setSubjectsOptions] = useState([]); // Add state for subjects
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
+    const [tempPassword, setTempPassword] = useState('');
+  
+    // Fetch subjects when component mounts and when schoolId changes
+    useEffect(() => {
+      if (userType === 'teacher' && schoolId) {
+        const fetchSubjects = async () => {
+          try {
+            const token = localStorage.getItem('access_token');
+            const response = await fetch(`http://localhost:5000/api/schools/${schoolId}/subjects`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              // Check the response structure here
+              console.log("Subjects data:", data);
+              
+              // Handle both array and object responses
+              const subjectsArray = Array.isArray(data) ? data : 
+                                  (data.subjects || []);
+              
+              setSubjectsOptions(subjectsArray.map(subject => ({
+                value: subject.id,
+                label: subject.name
+              })));
+            } else {
+              console.error('Failed to fetch subjects:', response.status);
+            }
+          } catch (err) {
+            console.error('Failed to fetch subjects:', err);
+          }
+        };
+        
+        fetchSubjects();
+      }
+    }, [userType, schoolId]);
+  
+    const handleInputChange = (e) => {
+      const { name, value } = e.target;
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    };
+  
+    const handleSubjectsChange = (selectedOptions) => {
+      setFormData(prev => ({
+        ...prev,
+        subjects: selectedOptions ? selectedOptions.map(option => option.value) : []
+      }));
+    };
+  
+    const validateForm = () => {
+      if (!formData.first_name.trim()) {
+        setError('First name is required');
+        return false;
+      }
+      if (!formData.last_name.trim()) {
+        setError('Last name is required');
+        return false;
+      }
+      if (userType === 'student') {
+        if (!formData.admission_number.trim()) {
+          setError('Admission number is required');
+          return false;
+        }
+        if (!formData.grade_level) {
+          setError('Grade level is required');
+          return false;
+        }
+      }
+      if (userType === 'teacher') {
+        if (!formData.teacher_id.trim()) {
+          setError('Teacher ID (TSC or National ID) is required');
+          return false;
+        }
+        const teacherId = formData.teacher_id.trim().toUpperCase();
+    if (!teacherId.startsWith('TSC') && !/^\d{6,12}$/.test(teacherId)) {
+      setError('Teacher ID must be TSC (TSC12345) or National ID (6-12 digits)');
+      return false;
+    }
+        if (formData.subjects.length === 0) {
+          setError('At least one subject is required');
+          return false;
+        }
+      }
+      return true;
+    };
+  
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      
+      if (!validateForm()) return;
+    
+      setIsSubmitting(true);
+      setError('');
+    
+      try {
+        const payload = {
+          first_name: formData.first_name.trim(),
+          last_name: formData.last_name.trim(),
+          role: userType,
+          school_id: schoolId,
+          ...(userType === 'teacher' && {
+            email: formData.email.trim(),
+            phone: formData.phone_number.trim(), // Changed to 'phone' for backend
+            teacher_id: formData.teacher_id.trim(),
+            subjects: formData.subjects
+          }),
+          ...(userType === 'student' && {
+            admission_number: formData.admission_number.trim(),
+            grade_level: parseInt(formData.grade_level)
+          })
+        };
+    
+        const response = await fetch(`http://localhost:5000/api/users/${schoolId}/create`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          },
+          body: JSON.stringify(payload)
+        });
+    
+        const data = await response.json();
+    
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to create user');
+        }
+    
+        setTempPassword(data.temporary_password);
+        setShowPasswordModal(true);
+        
+        // Reset form
+        setFormData({
+          first_name: '',
+          last_name: '',
+          ...(userType === 'student' ? { 
+            admission_number: '',
+            grade_level: '' 
+          } : { 
+            email: '',
+            phone_number: '',
+            teacher_id: '',
+            subjects: []
+          })
+        });
+    
+      } catch (err) {
+        console.error('Creation error:', err);
+        setError(err.message);
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+  const handlePasswordModalClose = () => {
+    setShowPasswordModal(false);
+    onClose(); // Close the entire modal after showing password
+  };
+
+  return (
+    <>
+      <div className="modal-overlay">
+        <div className="modal-content">
+          <div className="modal-header">
+            <h2>
+              {userType === 'student' ? <Users size={20} /> : <UserPlus size={20} />}
+              Add New {userType === 'student' ? 'Student' : 'Teacher'}
+            </h2>
+            <button onClick={onClose} className="close-btn">
+              <X size={20} />
+            </button>
+          </div>
+
+          {error && <div className="error-message">{error}</div>}
+          
+          <form onSubmit={handleSubmit}>
+            {/* Your form fields here */}
+            <div className="form-group">
+              <label>First Name</label>
+              <input
+                type="text"
+                name="first_name"
+                value={formData.first_name}
+                onChange={handleInputChange}
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Last Name</label>
+              <input
+                type="text"
+                name="last_name"
+                value={formData.last_name}
+                onChange={handleInputChange}
+                required
+              />
+            </div>
+            
+            {userType === 'teacher' && (
+              <>
+                <div className="form-group">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Phone Number</label>
+                  <input
+                    type="tel"
+                    name="phone_number"
+                    value={formData.phone_number}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="e.g., +254712345678"
+                  />
+                </div>
+              </>
+            )}
+            
+            {userType === 'student' ? (
+              <div className="form-group">
+                <label>Admission Number</label>
+                <input
+                  type="text"
+                  name="admission_number"
+                  value={formData.admission_number}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="e.g., ADM2023001"
+                />
+              </div>
+            ) : (
+              <div className="form-group">
+    <label>Teacher ID (TSC/National ID)</label>
+    <input
+      type="text"
+      name="teacher_id"
+      value={formData.teacher_id}
+      onChange={handleInputChange}
+      placeholder="TSC12345 or 12345678 (National ID)"
+      required
+    />
+    <small className="form-hint">
+      Enter either TSC number (format: TSC12345) or National ID (digits only)
+    </small>
+  </div>
+)}
+            
+            {userType === 'student' && (
+              <div className="form-group">
+                <label>Grade Level</label>
+                <select
+  name="grade_level"
+  value={formData.grade_level}
+  onChange={handleInputChange}
+  required
+>
+  <option value="">Select grade</option>
+  {[7, 8, 9, 10, 11, 12].map(grade => (
+    <option key={grade} value={grade}>Grade {grade}</option>
+  ))}
+</select>
+              </div>
+            )}
+            
+            {userType === 'teacher' && (
+              <div className="form-group">
+                  <label>Subjects</label>
+                  <Select
+                    isMulti
+                    options={subjectsOptions}
+                    value={subjectsOptions.filter(option => 
+                      formData.subjects.includes(option.value)
+                    )}
+                    onChange={handleSubjectsChange}
+                    className="multi-select"
+                    placeholder="Select subjects..."
+                    required
+                  />
+                </div>
+            )}
+            
+            <div className="form-actions">
+              <button 
+                type="button" 
+                onClick={onClose} 
+                className="cancel-btn"
+                disabled={isSubmitting}
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                className="submit-btn" 
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <span>Adding...</span>
+                ) : (
+                  <span>Add {userType === 'student' ? 'Student' : 'Teacher'}</span>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {showPasswordModal && (
+        <div className="modal-overlay">
+          <div className="modal-content password-modal">
+            <div className="modal-header">
+              <h2>✅ User Created Successfully</h2>
+              <button onClick={handlePasswordModalClose} className="close-btn">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="modal-body">
+              <p>
+                {userType === 'student' ? 'Student' : 'Teacher'} {formData.first_name} {formData.last_name} 
+                has been successfully created.
+              </p>
+              
+              <div className="password-display">
+                <p>Temporary Password:</p>
+                <div className="password-value">{tempPassword}</div>
+              </div>
+              
+              <p className="password-instruction">
+                Please provide this password to the user. They will be required to change it on first login.
+              </p>
+            </div>
+            
+            <div className="modal-footer">
+              <button 
+                onClick={handlePasswordModalClose}
+                className="confirm-btn"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+const AddSubjectModal = ({ schoolId, onClose, onSubjectAdded }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    code: '',
+    description: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!formData.name.trim()) {
+      setError('Subject name is required');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`http://localhost:5000/api/schools/${schoolId}/subjects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          code: formData.code.trim(),
+          description: formData.description.trim()
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to add subject');
+      }
+
+      onSubjectAdded(data.subject);
+      onClose();
+    } catch (err) {
+      console.error('Error adding subject:', err);
+      setError(err.message || 'Failed to add subject. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <div className="modal-header">
+          <h2>Add New Subject</h2>
+          <button onClick={onClose} className="close-btn">
+            &times;
+          </button>
+        </div>
+
+        {error && <div className="error-message">{error}</div>}
+        
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>Subject Name *</label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleInputChange}
+              required
+            />
+          </div>
+          
+          <div className="form-group">
+            <label>Subject Code</label>
+            <input
+              type="text"
+              name="code"
+              value={formData.code}
+              onChange={handleInputChange}
+            />
+          </div>
+          
+          <div className="form-group">
+            <label>Description</label>
+            <textarea
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+            />
+          </div>
+          
+          <div className="form-actions">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="cancel-btn"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="submit-btn" 
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Adding...' : 'Add Subject'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
+};
 
   const AnnouncementsWidget = () => (
     <div className="announcements-widget">

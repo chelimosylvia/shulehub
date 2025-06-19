@@ -2,7 +2,7 @@ import random
 import string
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from models import School, User
+from models import School, User, Subject
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 import traceback
@@ -127,8 +127,7 @@ def create_school():
         db.session.rollback()
         traceback.print_exc()
         return jsonify({'error': 'Registration failed', 'details': str(e)}), 500
-# school_route.py
-# school_route.py
+
 @school_bp.route('/<int:school_id>', methods=['GET'])
 @jwt_required()
 def get_school(school_id):
@@ -164,12 +163,106 @@ def get_school(school_id):
         traceback.print_exc()
         return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
+@school_bp.route('/<int:school_id>/subjects', methods=['POST'])
+@jwt_required()
+def add_school_subject(school_id):
+    try:
+        # Authentication and authorization
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+        
+        if not current_user or current_user.role not in ['school_admin', 'system_owner']:
+            return jsonify({'error': 'Unauthorized'}), 403
 
+        # Validate school exists
+        school = School.query.get(school_id)
+        if not school:
+            return jsonify({'error': 'School not found'}), 404
 
+        # Validate request
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+            
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        
+        if not name:
+            return jsonify({'error': 'Subject name is required'}), 400
 
+        # Check for duplicate subject (case-insensitive)
+        existing_subject = Subject.query.filter(
+            db.func.lower(Subject.name) == db.func.lower(name),
+            Subject.school_id == school_id
+        ).first()
+        
+        if existing_subject:
+            return jsonify({'error': 'Subject already exists in this school'}), 400
 
+        # Create new subject
+        new_subject = Subject(
+            name=name,
+            code=data.get('code', '').strip(),
+            description=data.get('description', '').strip(),
+            school_id=school_id
+        )
+        
+        db.session.add(new_subject)
+        db.session.commit()
 
+        return jsonify({
+            'message': 'Subject added successfully',
+            'subject': {
+                'id': new_subject.id,
+                'name': new_subject.name,
+                'code': new_subject.code,
+                'description': new_subject.description,
+                'school_id': new_subject.school_id
+            }
+        }), 201
 
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+        
+@school_bp.route('/<int:school_id>/subjects', methods=['GET'])
+@jwt_required()
+def get_school_subjects(school_id):
+    try:
+        subjects = Subject.query.filter_by(school_id=school_id).all()
+        return jsonify([{
+            'id': subject.id,
+            'name': subject.name,
+            'code': subject.code
+        } for subject in subjects]), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@school_bp.route('/<int:school_id>/subjects/<int:subject_id>', methods=['PUT', 'DELETE'])
+@jwt_required()
+def manage_school_subject(school_id, subject_id):
+    try:
+        subject = Subject.query.filter_by(id=subject_id, school_id=school_id).first_or_404()
+        
+        if request.method == 'PUT':
+            data = request.get_json()
+            if 'name' in data:
+                subject.name = data['name'].strip()
+            if 'code' in data:
+                subject.code = data['code'].strip()
+            if 'description' in data:
+                subject.description = data['description'].strip()
+            
+            db.session.commit()
+            return jsonify(subject.to_dict()), 200
+            
+        elif request.method == 'DELETE':
+            db.session.delete(subject)
+            db.session.commit()
+            return jsonify({'message': 'Subject deleted successfully'}), 200
+            
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 
 

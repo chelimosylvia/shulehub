@@ -2,24 +2,37 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
 from extensions import db
 
+teacher_subject = db.Table('teacher_subject',
+    db.Column('teacher_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
+    db.Column('subject_id', db.Integer, db.ForeignKey('subjects.id'), primary_key=True),
+    db.Column('created_at', db.DateTime, default=datetime.utcnow)
+)
+
 # ------------------ USER ------------------
 
 class User(db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=True, index=True)
     password_hash = db.Column(db.String(255), nullable=True)
     first_name = db.Column(db.String(50), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
-    phone = db.Column(db.String(20))
+    phone = db.Column(db.String(20), nullable=True)
     role = db.Column(db.Enum('student', 'teacher', 'school_admin', name='user_roles'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    #Relationships
-
+    
+    # Student/Teacher specific fields
+    admission_number = db.Column(db.String(50), unique=True, nullable=True)  # For students
+    tsc_number = db.Column(db.String(50), unique=True, nullable=True)
+    national_id = db.Column(db.String(50), unique=True, nullable=True)  # National ID (nullable)       # For teachers
+    grade_level = db.Column(db.Integer, nullable=True)                      # For students
+    must_change_password = db.Column(db.Boolean, default=False)
+    
+    # Relationships
     schools = db.relationship('School', backref='owner', lazy=True, foreign_keys='School.owner_id')
     enrollments = db.relationship('Enrollment', backref='user', lazy=True)
     classes_teaching = db.relationship('SchoolClass', backref='class_teacher', lazy=True, foreign_keys='SchoolClass.teacher_id')
@@ -27,11 +40,21 @@ class User(db.Model):
     notifications = db.relationship('Notification', backref='user', lazy=True)
     dashboard_preferences = db.relationship('UserDashboardPreferences', backref='user', uselist=False, cascade='all, delete-orphan')
     activities = db.relationship('Activity', backref='user', lazy=True)
+    subjects = db.relationship('Subject', secondary=teacher_subject, back_populates='teachers', lazy='dynamic')
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "(role != 'teacher') OR (tsc_number IS NOT NULL OR national_id IS NOT NULL)",
+            name='teacher_requires_id'
+        ),
+    )
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
     
     def check_password(self, password):
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
     
     def to_dict(self):
@@ -42,11 +65,16 @@ class User(db.Model):
             'last_name': self.last_name,
             'phone': self.phone,
             'role': self.role,
+            'school_id': self.school_id,
+            'admission_number': self.admission_number,
+            'tsc_number': self.tsc_number,
+            'grade_level': self.grade_level,
+            'subjects': [subject.to_dict() for subject in self.subjects] if self.role == 'teacher' else None,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'must_change_password': self.must_change_password
         }
-
 # ------------------ SCHOOL ------------------
 
 class School(db.Model):
@@ -78,6 +106,7 @@ class School(db.Model):
     sessions = db.relationship('ClassroomSession', backref='school', lazy=True, cascade='all, delete-orphan')
     dashboard_settings = db.relationship('SchoolDashboardSettings', backref='school', uselist=False, cascade='all, delete-orphan')
     announcements = db.relationship('SchoolAnnouncement', backref='school', lazy=True)
+    subjects = db.relationship('Subject', backref='school', lazy='dynamic',cascade='all, delete-orphan')
 
     def to_dict(self):
         return {
@@ -439,4 +468,30 @@ class SchoolAnnouncement(db.Model):
             'publish_date': self.publish_date.isoformat() if self.publish_date else None,
             'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
             'created_at': self.created_at.isoformat()
+        }
+
+# ------------------ SUBJECT MODEL ------------------
+
+class Subject(db.Model):
+    __tablename__ = 'subjects'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    code = db.Column(db.String(20), unique=True)
+    description = db.Column(db.Text)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    teachers = db.relationship('User', secondary=teacher_subject, back_populates='subjects')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'description': self.description,
+            'school_id': self.school_id,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
         }
