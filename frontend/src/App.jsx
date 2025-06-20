@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import HomePage from './pages/Homepage';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
@@ -13,46 +13,65 @@ const App = () => {
   return (
     <Router>
       <Routes>
+        {/* Public routes */}
         <Route path="/" element={<HomePage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         
-        {/* Main dashboard route with nested routes */}
-        <Route 
-          path="/school/:schoolId/dashboard" 
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } 
-        >
-          {/* Nested routes for different user types */}
-          <Route path="student" element={<StudentDashboard />} />
-          <Route path="teacher" element={<TeacherDashboard />} />
+        {/* School routes */}
+        <Route path="/school/:schoolId">
+          {/* Admin dashboard */}
+          <Route 
+            path="dashboard" 
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <Dashboard />
+              </ProtectedRoute>
+            } 
+          />
           
-          {/* Default dashboard view based on user role */}
+          {/* Student dashboard */}
+          <Route 
+            path="student/dashboard" 
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <StudentDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Teacher dashboard */}
+          <Route 
+            path="teacher/dashboard" 
+            element={
+              <ProtectedRoute allowedRoles={['teacher']}>
+                <TeacherDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          
+          {/* Default redirect based on role */}
           <Route index element={<RoleBasedDashboard />} />
         </Route>
 
+        {/* Catch-all route */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
 };
 
-// Component to determine which dashboard to show based on user role
 const RoleBasedDashboard = () => {
-  // In a real app, you would get this from your auth context or user data
-  const userRole = localStorage.getItem('user_role'); // 'student' or 'teacher'
+  const userRole = localStorage.getItem('user_role');
+  
+  const redirectPaths = {
+    admin: 'dashboard',
+    teacher: 'teacher/dashboard',
+    student: 'student/dashboard'
+  };
 
-  switch(userRole) {
-    case 'student':
-      return <StudentDashboard />;
-    case 'teacher':
-      return <TeacherDashboard />;
-    default:
-      return <div>Loading dashboard...</div>;
-  }
+  return <Navigate to={redirectPaths[userRole] || '/'} replace />;
 };
 
 export default App;

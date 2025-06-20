@@ -1,49 +1,122 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { jwtDecode } from 'jwt-decode';
 import { 
-  Layout, BookOpen, Clipboard, Award, UserCheck, Calendar, User 
-} from 'react-feather';
+  BookOpen, Calendar, Award, User, Bell, Layout, 
+  Clipboard, BarChart2, PieChart as PieChartIcon, Bookmark
+} from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import './StudentDashboard.css';
 
-const StudentDashboard = ({ user, school, schoolData }) => {
+const SchoolStudentDashboard = () => {
+  const navigate = useNavigate();
+  const { schoolId } = useParams();
+  const [user, setUser] = useState(null);
+  const [school, setSchool] = useState(null);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedClass, setSelectedClass] = useState(null);
-  const [assignments, setAssignments] = useState([]);
-  const [grades, setGrades] = useState([]);
-  const [attendance, setAttendance] = useState([]);
 
   useEffect(() => {
-    const fetchStudentData = async () => {
+    const initializeDashboard = async () => {
       try {
+        setIsLoading(true);
         const token = localStorage.getItem('access_token');
-        
-        const assignmentsRes = await fetch(`/api/students/${user.id}/assignments`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        setAssignments(await assignmentsRes.json());
-        
-        const gradesRes = await fetch(`/api/students/${user.id}/grades`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const gradesData = await gradesRes.json();
-        setGrades(gradesData);
-        
-        if (gradesData.length > 0) {
-          setSelectedClass(gradesData[0].class_id);
+        if (!token) {
+          navigate('/login');
+          return;
         }
+
+        // Decode token to get user information
+        const decoded = jwtDecode(token);
         
-        const attendanceRes = await fetch(`/api/students/${user.id}/attendance`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+        // Verify required fields exist in token
+        if (!decoded.admission_number || !decoded.school_id) {
+          throw new Error('Missing required user information in token');
+        }
+
+        // Verify school ID matches route parameter
+        if (parseInt(schoolId) !== decoded.school_id) {
+          throw new Error('School ID mismatch');
+        }
+
+        // Fetch dashboard data using admission number
+        const response = await fetch(
+          `http://localhost:5000/api/schools/${schoolId}/students/${decoded.admission_number}/dashboard`,
+          {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Failed to load dashboard data');
+        }
+
+        const data = await response.json();
+        
+        setUser({
+          id: decoded.sub,
+          name: `${decoded.first_name} ${decoded.last_name}`,
+          admission_number: decoded.admission_number,
+          grade_level: data.grade_level || 'N/A'
         });
-        setAttendance(await attendanceRes.json());
-      } catch (error) {
-        console.error('Error fetching student data:', error);
+        
+        setSchool({
+          id: schoolId,
+          name: data.school?.name || 'Unknown School'
+        });
+        
+        setDashboardData({
+          attendance: data.attendance || {},
+          grades: data.grades || {},
+          assignments: data.assignments || [],
+          classes: data.classes || []
+        });
+        
+      } catch (err) {
+        setError(err.message);
+        console.error('Dashboard initialization error:', err);
+        // Redirect to login if token is invalid
+        if (err.message.includes('token') || err.message.includes('authentication')) {
+          localStorage.removeItem('access_token');
+          navigate('/login');
+        }
+      } finally {
+        setIsLoading(false);
       }
     };
-    
-    fetchStudentData();
-  }, [user.id]);
+
+    initializeDashboard();
+  }, [navigate, schoolId]);
+
+  if (isLoading) return (
+    <div className="loading-container">
+      <div className="loading-spinner"></div>
+      <p>Loading your dashboard...</p>
+    </div>
+  );
+
+  if (error) return (
+    <div className="error-container">
+      <h3>Error Loading Dashboard</h3>
+      <p>{error}</p>
+      <button 
+        onClick={() => window.location.reload()} 
+        className="retry-button"
+      >
+        Try Again
+      </button>
+    </div>
+  );
 
   return (
-    <div className="student-dashboard">
+    <div className="student-dashboard-container">
+      {/* Sidebar Navigation */}
       <div className="dashboard-sidebar">
         <div className="sidebar-header">
           <div className="student-avatar">
@@ -51,344 +124,196 @@ const StudentDashboard = ({ user, school, schoolData }) => {
           </div>
           <div className="student-info">
             <h3>{user.name}</h3>
-            <p>Grade {user.grade_level}</p>
+            <p className="admission-number">Admission: {user.admission_number}</p>
+            <p className="grade-school">Grade {user.grade_level} • {school.name}</p>
           </div>
         </div>
-        
+
         <nav className="sidebar-nav">
-          <ul>
-            <li className={activeTab === 'dashboard' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('dashboard')}>
-                <Layout size={18} />
-                <span>Dashboard</span>
-              </button>
-            </li>
-            <li className={activeTab === 'classes' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('classes')}>
-                <BookOpen size={18} />
-                <span>My Classes</span>
-              </button>
-            </li>
-            <li className={activeTab === 'assignments' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('assignments')}>
-                <Clipboard size={18} />
-                <span>Assignments</span>
-              </button>
-            </li>
-            <li className={activeTab === 'grades' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('grades')}>
-                <Award size={18} />
-                <span>Grades</span>
-              </button>
-            </li>
-          </ul>
+          <button 
+            className={`nav-button ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            <Layout size={18} /> Dashboard
+          </button>
+          <button 
+            className={`nav-button ${activeTab === 'classes' ? 'active' : ''}`}
+            onClick={() => setActiveTab('classes')}
+          >
+            <BookOpen size={18} /> My Classes
+          </button>
+          <button 
+            className={`nav-button ${activeTab === 'assignments' ? 'active' : ''}`}
+            onClick={() => setActiveTab('assignments')}
+          >
+            <Clipboard size={18} /> Assignments
+          </button>
+          <button 
+            className={`nav-button ${activeTab === 'grades' ? 'active' : ''}`}
+            onClick={() => setActiveTab('grades')}
+          >
+            <Award size={18} /> Grades
+          </button>
         </nav>
       </div>
-      
-      <div className="dashboard-content">
+
+      {/* Main Content Area */}
+      <div className="dashboard-main-content">
         {activeTab === 'dashboard' && (
-          <StudentOverview 
-            user={user} 
-            school={school} 
-            assignments={assignments} 
-            grades={grades}
-            attendance={attendance}
-          />
+          <>
+            <div className="welcome-banner">
+              <h2>Welcome back, {user.name.split(' ')[0]}!</h2>
+              <p>Here's what's happening today</p>
+            </div>
+
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-icon">
+                  <BookOpen size={24} />
+                </div>
+                <div className="stat-content">
+                  <h3>Current Classes</h3>
+                  <p>{dashboardData.classes.length}</p>
+                </div>
+              </div>
+              
+              <div className="stat-card">
+                <div className="stat-icon">
+                  <Clipboard size={24} />
+                </div>
+                <div className="stat-content">
+                  <h3>Pending Assignments</h3>
+                  <p>
+                    {dashboardData.assignments.filter(a => !a.completed).length}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="stat-card">
+                <div className="stat-icon">
+                  <Award size={24} />
+                </div>
+                <div className="stat-content">
+                  <h3>Average Grade</h3>
+                  <p>
+                    {dashboardData.grades.average ? 
+                      `${dashboardData.grades.average}%` : 'N/A'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {dashboardData.grades.trend && (
+              <div className="chart-container">
+                <h3>Your Grade Progress</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={dashboardData.grades.trend}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="period" />
+                    <YAxis domain={[0, 100]} />
+                    <Tooltip 
+                      formatter={(value) => [`${value}%`, 'Grade']}
+                      labelFormatter={(label) => `Period: ${label}`}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="grade" 
+                      stroke="#3B82F6" 
+                      strokeWidth={2}
+                      dot={{ r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </>
         )}
-        
+
         {activeTab === 'classes' && (
-          <StudentClasses 
-            classes={grades.map(g => ({ 
-              id: g.class_id, 
-              name: g.class_name,
-              teacher: g.teacher_name 
-            }))}
-            selectedClass={selectedClass}
-            onSelectClass={setSelectedClass}
-          />
-        )}
-        
-        {activeTab === 'assignments' && (
-          <StudentAssignments 
-            assignments={assignments} 
-            selectedClass={selectedClass}
-          />
-        )}
-        
-        {activeTab === 'grades' && (
-          <StudentGrades 
-            grades={grades} 
-            selectedClass={selectedClass}
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Student Sub-Components
-const StudentOverview = ({ user, school, assignments, grades, attendance }) => {
-  const upcomingAssignments = assignments
-    .filter(a => new Date(a.due_date) > new Date())
-    .slice(0, 3);
-
-  const averageGrade = grades.length > 0 
-    ? (grades.reduce((sum, g) => sum + g.grade, 0) / grades.length).toFixed(1)
-    : 'N/A';
-
-  const attendanceRate = attendance.length > 0
-    ? ((attendance.filter(a => a.status === 'present').length / attendance.length) * 100).toFixed(1)
-    : 'N/A';
-
-  return (
-    <div className="student-overview">
-      <div className="welcome-banner">
-        <h2>Welcome back, {user.name.split(' ')[0]}!</h2>
-        <p>{school.name} • Grade {user.grade_level}</p>
-      </div>
-      
-      <div className="stats-grid">
-        <StatCard 
-          icon={<Award size={24} />} 
-          title="Average Grade" 
-          value={`${averageGrade}%`} 
-        />
-        <StatCard 
-          icon={<UserCheck size={24} />} 
-          title="Attendance" 
-          value={`${attendanceRate}%`} 
-        />
-        <StatCard 
-          icon={<Clipboard size={24} />} 
-          title="Pending Assignments" 
-          value={assignments.filter(a => !a.submitted).length} 
-        />
-      </div>
-      
-      <div className="overview-sections">
-        <UpcomingAssignments assignments={upcomingAssignments} />
-        <RecentGrades grades={grades} />
-      </div>
-    </div>
-  );
-};
-
-const StatCard = ({ icon, title, value }) => (
-  <div className="stat-card">
-    <div className="stat-content">
-      <h3>{title}</h3>
-      <p className="stat-value">{value}</p>
-    </div>
-    <div className="stat-icon">{icon}</div>
-  </div>
-);
-
-const UpcomingAssignments = ({ assignments }) => (
-  <div className="upcoming-assignments">
-    <h3>Upcoming Assignments</h3>
-    {assignments.length > 0 ? (
-      <div className="assignments-list">
-        {assignments.map(assignment => (
-          <div key={assignment.id} className="assignment-item">
-            <div className="assignment-info">
-              <h4>{assignment.title}</h4>
-              <p className="assignment-class">{assignment.class_name}</p>
-              <p className="assignment-due">
-                Due: {new Date(assignment.due_date).toLocaleDateString()}
-              </p>
-            </div>
-            <div className="assignment-status">
-              {assignment.submitted ? (
-                <span className="status-submitted">Submitted</span>
-              ) : (
-                <span className="status-pending">Pending</span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    ) : (
-      <p className="no-assignments">No upcoming assignments</p>
-    )}
-  </div>
-);
-
-const RecentGrades = ({ grades }) => (
-  <div className="recent-grades">
-    <h3>Recent Grades</h3>
-    {grades.length > 0 ? (
-      <div className="grades-list">
-        {grades.slice(0, 3).map(grade => (
-          <div key={grade.assignment_id} className="grade-item">
-            <div className="grade-info">
-              <h4>{grade.assignment_name}</h4>
-              <p className="grade-class">{grade.class_name}</p>
-            </div>
-            <div className="grade-value">
-              <span className={`grade-badge ${getGradeClass(grade.grade)}`}>
-                {grade.grade}%
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    ) : (
-      <p className="no-grades">No grades available</p>
-    )}
-  </div>
-);
-
-const StudentClasses = ({ classes, selectedClass, onSelectClass }) => {
-  return (
-    <div className="student-classes">
-      <h2>My Classes</h2>
-      
-      <div className="classes-grid">
-        {classes.map(classItem => (
-          <div 
-            key={classItem.id} 
-            className={`class-card ${selectedClass === classItem.id ? 'active' : ''}`}
-            onClick={() => onSelectClass(classItem.id)}
-          >
-            <div className="class-icon">
-              <BookOpen size={24} />
-            </div>
-            <div className="class-info">
-              <h3>{classItem.name}</h3>
-              <p>Teacher: {classItem.teacher}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-      
-      {selectedClass && (
-        <ClassDetails 
-          classId={selectedClass} 
-          classInfo={classes.find(c => c.id === selectedClass)} 
-        />
-      )}
-    </div>
-  );
-};
-
-const StudentAssignments = ({ assignments, selectedClass }) => {
-  const [activeTab, setActiveTab] = useState('pending');
-
-  const filteredAssignments = selectedClass
-    ? assignments.filter(a => a.class_id === selectedClass)
-    : assignments;
-
-  const pendingAssignments = filteredAssignments.filter(a => !a.submitted);
-  const completedAssignments = filteredAssignments.filter(a => a.submitted);
-
-  return (
-    <div className="student-assignments">
-      <div className="assignments-header">
-        <h2>Assignments</h2>
-        <div className="assignment-filters">
-          <button 
-            className={`filter-btn ${activeTab === 'pending' ? 'active' : ''}`}
-            onClick={() => setActiveTab('pending')}
-          >
-            Pending ({pendingAssignments.length})
-          </button>
-          <button 
-            className={`filter-btn ${activeTab === 'completed' ? 'active' : ''}`}
-            onClick={() => setActiveTab('completed')}
-          >
-            Completed ({completedAssignments.length})
-          </button>
-        </div>
-      </div>
-      
-      <div className="assignments-container">
-        {activeTab === 'pending' ? (
-          pendingAssignments.length > 0 ? (
-            pendingAssignments.map(assignment => (
-              <AssignmentCard 
-                key={assignment.id}
-                assignment={assignment}
-                type="pending"
-              />
-            ))
-          ) : (
-            <p className="no-assignments">No pending assignments</p>
-          )
-        ) : (
-          completedAssignments.length > 0 ? (
-            completedAssignments.map(assignment => (
-              <AssignmentCard 
-                key={assignment.id}
-                assignment={assignment}
-                type="completed"
-              />
-            ))
-          ) : (
-            <p className="no-assignments">No completed assignments</p>
-          )
-        )}
-      </div>
-    </div>
-  );
-};
-
-const StudentGrades = ({ grades, selectedClass }) => {
-  const filteredGrades = selectedClass
-    ? grades.filter(g => g.class_id === selectedClass)
-    : grades;
-
-    const averageGrade = filteredGrades.length > 0
-    ? (filteredGrades.reduce((sum, g) => sum + g.grade, 0) / filteredGrades.length)
-    : 0;
-
-  return (
-    <div className="student-grades">
-      <h2>Grades</h2>
-      
-      <div className="grades-summary">
-        <div className="average-grade">
-          <h3>Class Average</h3>
-          <div className="grade-circle">
-            {averageGrade.toFixed(1)}%
-          </div>
-        </div>
-        
-        <div className="grades-list">
-          <table>
-            <thead>
-              <tr>
-                <th>Assignment</th>
-                <th>Grade</th>
-                <th>Feedback</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredGrades.map(grade => (
-                <tr key={grade.assignment_id}>
-                  <td>{grade.assignment_name}</td>
-                  <td>
-                    <span className={`grade-badge ${getGradeClass(grade.grade)}`}>
-                      {grade.grade}%
-                    </span>
-                  </td>
-                  <td>{grade.feedback || 'No feedback'}</td>
-                </tr>
+          <div className="classes-section">
+            <h2>Your Classes</h2>
+            <div className="classes-grid">
+              {dashboardData.classes.map(cls => (
+                <div key={cls.id} className="class-card">
+                  <h3>{cls.name}</h3>
+                  <p><strong>Teacher:</strong> {cls.teacher_name}</p>
+                  <p><strong>Schedule:</strong> {cls.schedule}</p>
+                  <p><strong>Room:</strong> {cls.room_number || 'TBD'}</p>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'assignments' && (
+          <div className="assignments-section">
+            <h2>Your Assignments</h2>
+            <div className="assignments-list">
+              {dashboardData.assignments.map(assignment => (
+                <div 
+                  key={assignment.id} 
+                  className={`assignment-card ${assignment.completed ? 'completed' : ''}`}
+                >
+                  <div className="assignment-header">
+                    <h3>{assignment.title}</h3>
+                    <span className="due-date">
+                      Due: {new Date(assignment.due_date).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <p className="class-name">{assignment.class_name}</p>
+                  <p className="assignment-status">
+                    Status: {assignment.completed ? 'Completed' : 'Pending'}
+                  </p>
+                  {assignment.description && (
+                    <p className="assignment-description">{assignment.description}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'grades' && (
+          <div className="grades-section">
+            <h2>Your Grades</h2>
+            <div className="grades-table-container">
+              <table className="grades-table">
+                <thead>
+                  <tr>
+                    <th>Subject</th>
+                    <th>Grade</th>
+                    <th>Feedback</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboardData.grades.details?.map((grade, index) => (
+                    <tr key={index}>
+                      <td>{grade.subject}</td>
+                      <td className={`grade-value ${getGradeClass(grade.value)}`}>
+                        {grade.value}%
+                      </td>
+                      <td className="grade-feedback">
+                        {grade.feedback || 'No feedback available'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+
+  // Helper function for grade styling
+  function getGradeClass(grade) {
+    if (grade >= 80) return 'excellent';
+    if (grade >= 70) return 'good';
+    if (grade >= 50) return 'average';
+    return 'poor';
+  }
 };
 
-// Helper function
-const getGradeClass = (grade) => {
-  if (grade >= 90) return 'excellent';
-  if (grade >= 80) return 'good';
-  if (grade >= 70) return 'average';
-  if (grade >= 60) return 'below-average';
-  return 'poor';
-};
-
-export default StudentDashboard;
+export default SchoolStudentDashboard;

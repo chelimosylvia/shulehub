@@ -148,6 +148,9 @@ def student_login():
                 identity=str(student.id),  # <-- CHANGED: Convert to string
                 additional_claims={
                     'school_id': student.school_id,
+                    'admission_number': student.admission_number,
+                    'first_name': student.first_name,
+                    'last_name': student.last_name,
                     'role': 'student',
                     'password_change_required': True
                 },
@@ -174,7 +177,11 @@ def student_login():
             identity=str(student.id),  # <-- CHANGED: Convert to string
             additional_claims={
                 'school_id': student.school_id,
+                'admission_number': student.admission_number,
+                'first_name': student.first_name,
+                'last_name': student.last_name,
                 'role': 'student'
+                
             }
         )
         refresh_token = create_refresh_token(identity=str(student.id))  # <-- CHANGED: Convert to string
@@ -202,121 +209,106 @@ def student_login():
 def teacher_login():
     try:
         if not request.is_json:
+            current_app.logger.error("Non-JSON request received")
             return jsonify({'error': 'Request must be JSON'}), 400
 
         data = request.get_json()
+        current_app.logger.debug(f"Login attempt with data: {data}")
 
-        # Convert school_id to integer - EXPECT ONLY NUMBERS
-        try:
-            school_id = int(data.get('school_id'))
-        except (TypeError, ValueError):
-            return jsonify({
-                'error': 'Invalid school_id - must be a number',
-                'received': data.get('school_id')
-            }), 400
-
-        # Validate required fields
+        # Input validation
         required_fields = ['school_id', 'password']
         if not all(field in data for field in required_fields):
-            return jsonify({
-                'error': 'Missing required fields',
-                'required_fields': required_fields,
-                'received_fields': list(data.keys())
-            }), 400
+            missing = [f for f in required_fields if f not in data]
+            current_app.logger.warning(f"Missing fields: {missing}")
+            return jsonify({'error': f'Missing required fields: {missing}'}), 400
 
-        # Must have either tsc_number or national_id
-        tsc_number = data.get('tsc_number')
-        national_id = data.get('national_id')
-        
-        if not tsc_number and not national_id:
-            return jsonify({
-                'error': 'Provide either TSC number or National ID'
-            }), 400
+        # Identifier validation
+        identifier = data.get('tsc_number') or data.get('national_id')
+        if not identifier:
+            current_app.logger.warning("No identifier provided")
+            return jsonify({'error': 'Provide either TSC number or National ID'}), 400
 
-        print(f"Teacher login attempt:")
-        print(f"  school_id: {school_id}")
-        print(f"  tsc_number: {tsc_number}")
-        print(f"  national_id: {national_id}")
+        # School ID validation
+        try:
+            school_id = int(data['school_id'])
+        except (ValueError, TypeError):
+            current_app.logger.warning(f"Invalid school_id: {data.get('school_id')}")
+            return jsonify({'error': 'Invalid school ID format'}), 400
 
-        # Query for teacher
-        query = User.query.filter_by(
+        # Find teacher
+        teacher_query = User.query.filter_by(
             school_id=school_id,
             role='teacher'
         )
-        
-        if tsc_number:
-            teacher = query.filter_by(tsc_number=tsc_number).first()
+
+        if 'tsc_number' in data:
+            teacher = teacher_query.filter(
+                db.func.upper(User.tsc_number) == data['tsc_number'].upper()
+            ).first()
         else:
-            teacher = query.filter_by(national_id=national_id).first()
+            teacher = teacher_query.filter_by(
+                national_id=data['national_id']
+            ).first()
 
         if not teacher:
-            # Debug: Show what teachers exist for this school
-            teachers_in_school = User.query.filter_by(
-                school_id=school_id,
-                role='teacher'
-            ).all()
-            print(f"Teachers in school {school_id}: {len(teachers_in_school)}")
-            for t in teachers_in_school[:5]:  # Show first 5
-                print(f"  - ID: {t.id}, TSC: {t.tsc_number}, National ID: {t.national_id}")
-            
-            identifier = tsc_number or national_id
-            return jsonify({
-                'error': 'Invalid credentials',
-                'details': f'No teacher found with identifier {identifier} in school {school_id}'
-            }), 401
+            current_app.logger.warning(
+                f"Teacher not found: school_id={school_id}, "
+                f"identifier={identifier}"
+            )
+            return jsonify({'error': 'Invalid credentials'}), 401
 
-        # Check if account is active
+        # Account status check
         if not teacher.is_active:
+            current_app.logger.warning(f"Inactive teacher account: {teacher.id}")
             return jsonify({'error': 'Account is inactive'}), 403
 
-        # Check password - handle both hashed and plain text passwords
+        # Password verification
         password_valid = False
-        password = data['password']
-        
         if teacher.password_hash:
-            if teacher.password_hash.startswith('$2b$'):
-                # Bcrypt hashed password
-                password_valid = check_password_hash(teacher.password_hash, password)
-            else:
-                # System-generated plain text password stored in password_hash field
-                password_valid = (teacher.password_hash == password)
-        elif hasattr(teacher, 'check_password'):
-            password_valid = teacher.check_password(password)
+            if teacher.password_hash.startswith('$2b$'):  # Bcrypt
+                password_valid = check_password_hash(
+                    teacher.password_hash, 
+                    data['password']
+                )
+            else:  # Legacy fallback
+                password_valid = (teacher.password_hash == data['password'])
+                if password_valid:
+                    # Upgrade to hashed password
+                    teacher.password_hash = generate_password_hash(data['password'])
+                    db.session.commit()
 
         if not password_valid:
-            print(f"Password check failed for teacher {teacher.id}")
-            return jsonify({
-                'error': 'Invalid credentials',
-                'details': 'Password incorrect'
-            }), 401
+            current_app.logger.warning(f"Invalid password for teacher {teacher.id}")
+            return jsonify({'error': 'Invalid credentials'}), 401
 
-        # Create tokens
+        # Token generation
         access_token = create_access_token(
-            identity=teacher.id,
+            identity=str(teacher.id),  # Ensure string sub claim
             additional_claims={
                 'school_id': teacher.school_id,
                 'role': 'teacher',
-                'password_change_required': getattr(teacher, 'must_change_password', False)
+                'password_change_required': teacher.must_change_password
             }
         )
-        refresh_token = create_refresh_token(identity=teacher.id)
 
-        print(f"Teacher login successful: {teacher.first_name} {teacher.last_name}")
-
+        current_app.logger.info(f"Successful login for teacher {teacher.id}")
         return jsonify({
             'access_token': access_token,
-            'refresh_token': refresh_token,
-            'user': teacher.to_dict(),
-            'password_change_required': getattr(teacher, 'must_change_password', False)
+            'user': {
+                'id': teacher.id,
+                'first_name': teacher.first_name,
+                'last_name': teacher.last_name,
+                'email': teacher.email,
+                'role': teacher.role,
+                'school_id': teacher.school_id,
+                'must_change_password': teacher.must_change_password
+            }
         }), 200
 
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Login failed',
-            'details': str(e)
-        }), 500
-
+        current_app.logger.error(f"Login error: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Login processing failed'}), 500
+        
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)
 def refresh():
@@ -352,115 +344,162 @@ def refresh():
 
 from flask_jwt_extended import create_access_token
 
-@auth_bp.route('/force-change-password', methods=['POST'])
-@jwt_required()
-def force_change_password():
+@auth_bp.route('/force-change-password', methods=['POST', 'OPTIONS'])
+def handle_force_change_password():
+    # Handle OPTIONS request for CORS
+    if request.method == 'OPTIONS':
+        return jsonify({'status': 'success'}), 200
+    
+    # Verify JWT for POST requests
     try:
-        # 1. Get raw request data
-        raw_data = request.get_data(as_text=True)
-        current_app.logger.info(f"📥 Raw request: {raw_data}")
-        
-        # 2. Parse JSON
-        try:
-            data = json.loads(raw_data) if raw_data else {}
-        except json.JSONDecodeError as e:
-            current_app.logger.error(f"❌ JSON error: {str(e)}")
+        verify_jwt_in_request()
+    except Exception as e:
+        current_app.logger.error(f"JWT verification failed: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Authentication required',
+            'error': str(e)
+        }), 401
+
+    try:
+        data = request.get_json()
+        if not data:
             return jsonify({
                 'status': 'error',
-                'message': 'Invalid JSON format'
+                'message': 'No data received'
             }), 400
 
-        # 3. Validate request
-        if not isinstance(data, dict):
-            return jsonify({
-                'status': 'error',
-                'message': 'Request must be a JSON object'
-            }), 422
-            
-        if 'new_password' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'new_password field is required'
-            }), 422
-            
-        password = data['new_password'].strip()
-        if len(password) < 8:
+        new_password = data.get('new_password', '').strip()
+        if len(new_password) < 8:
             return jsonify({
                 'status': 'error',
                 'message': 'Password must be at least 8 characters'
             }), 422
 
-        # 4. Get and update user
+        # Get user from token
         user_id = get_jwt_identity()
         user = User.query.get(user_id)
-        
         if not user:
             return jsonify({
                 'status': 'error',
                 'message': 'User not found'
             }), 404
 
-        user.password_hash = generate_password_hash(password)
+        # Update password
+        user.password_hash = generate_password_hash(new_password)
         user.must_change_password = False
         user.updated_at = datetime.utcnow()
-        
         db.session.commit()
 
-        # 5. Return success
+        # Generate new token without password change flag
+        new_token = create_access_token(
+            identity=str(user.id),
+            additional_claims={
+                'school_id': user.school_id,
+                'role': user.role,
+                'first_name': user.first_name,
+                'last_name': user.last_name
+            }
+        )
+
         return jsonify({
             'status': 'success',
-            'message': 'Password updated successfully'
+            'message': 'Password updated successfully',
+            'access_token': new_token,
+            'user': user.to_dict()
         }), 200
 
-    except SQLAlchemyError as e:
-        db.session.rollback()
-        current_app.logger.error(f"💾 Database error: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': 'Database error'
-        }), 500
-        
     except Exception as e:
-        current_app.logger.error(f"🔥 Unexpected error: {str(e)}")
+        db.session.rollback()
+        current_app.logger.error(f"Password change error: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': 'Internal server error'
+            'message': 'Password change failed'
         }), 500
 
 @auth_bp.route('/verify', methods=['POST'])
 def verify_token():
-    """Verify JWT token validity"""
+    """
+    Verify JWT token validity for all roles
+    Returns 401 if invalid, 200 with user data if valid
+    """
     try:
-        verify_jwt_in_request()
-        current_user_id = get_jwt_identity()
-        claims = get_jwt()
-        
-        user = User.query.get(current_user_id)
-        if not user:
-            return jsonify({'valid': False}), 401
+        # =====================================================================
+        # 1. Extract and Validate Token
+        # =====================================================================
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            current_app.logger.error("Missing or malformed Authorization header")
+            return jsonify({
+                'valid': False,
+                'error': 'Missing or invalid Authorization header'
+            }), 401
 
+        token = auth_header.split(' ')[1]
+        
+        # =====================================================================
+        # 2. Decode and Verify Token
+        # =====================================================================
+        try:
+            decoded = decode_token(token)
+            current_app.logger.debug(f"Decoded token: {decoded}")
+        except Exception as e:
+            current_app.logger.error(f"Token decode failed: {str(e)}")
+            return jsonify({
+                'valid': False,
+                'error': 'Invalid token',
+                'details': str(e)
+            }), 401
+
+        # =====================================================================
+        # 3. Get User from Database
+        # =====================================================================
+        user_id = str(decoded['sub'])  # Convert to string for safety
+        user = User.query.get(user_id)
+        
+        if not user:
+            current_app.logger.error(f"User not found: ID={user_id}")
+            return jsonify({
+                'valid': False,
+                'error': 'User not found'
+            }), 401
+
+        # =====================================================================
+        # 4. Role-Specific Validation
+        # =====================================================================
+        if decoded.get('role') == 'teacher':
+            if not user.is_active:
+                current_app.logger.warning(f"Inactive teacher: ID={user_id}")
+                return jsonify({
+                    'valid': False,
+                    'error': 'Teacher account inactive'
+                }), 403
+
+            # Update claims with current password change status
+            decoded['password_change_required'] = user.must_change_password
+
+        # =====================================================================
+        # 5. Successful Verification
+        # =====================================================================
+        current_app.logger.info(f"Successful verification for {user.role} ID={user_id}")
         return jsonify({
             'valid': True,
-            'user': user.to_dict(),
-            'claims': claims
+            'user': {
+                'id': user.id,
+                'email': user.email,
+                'role': user.role,
+                'school_id': user.school_id,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'is_active': user.is_active
+            },
+            'claims': decoded
         }), 200
 
     except Exception as e:
-        # Fallback to body token verification
-        data = request.get_json()
-        if not data or 'token' not in data:
-            return jsonify({'valid': False}), 401
-            
-        try:
-            decoded = decode_token(data['token'])
-            user = User.query.get(decoded['sub'])
-            if not user:
-                return jsonify({'valid': False}), 401
-                
-            return jsonify({
-                'valid': True,
-                'user': user.to_dict(),
-                'claims': decoded
-            }), 200
-        except Exception:
-            return jsonify({'valid': False}), 401
+        current_app.logger.error(f"Unexpected verification error: {str(e)}")
+        return jsonify({
+            'valid': False,
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500

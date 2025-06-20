@@ -305,84 +305,671 @@ const MultiSchoolDashboard = () => {
     </div>
   );
 
-  const QuickActions = () => {
-    const [showAddModal, setShowAddModal] = useState(false);
-    const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
-    const [userType, setUserType] = useState('student'); // 'student' or 'teacher'
-  
-    const handleAddClick = (type) => {
-      setUserType(type);
-      setShowAddModal(true);
-    };
-  
-    // Add null checks for dashboardSettings
-    if (!dashboardSettings || !dashboardSettings.enabled_modules) {
-      return (
-        <div className="quick-actions">
-          <h3>Quick Actions</h3>
-          <div className="loading-actions">Loading quick actions...</div>
-        </div>
-      );
-    }
-  
+// Updated QuickActions component with all modals
+const QuickActions = () => {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const [showAddClassModal, setShowAddClassModal] = useState(false);
+  const [showScheduleEventModal, setShowScheduleEventModal] = useState(false);
+  const [userType, setUserType] = useState('student'); // 'student' or 'teacher'
+
+  const handleAddClick = (type) => {
+    setUserType(type);
+    setShowAddModal(true);
+  };
+
+  const handleClassAdded = (newClass) => {
+    console.log('Class added:', newClass);
+    // You can add logic here to refresh the dashboard data
+    // or show a success message
+  };
+
+  const handleEventScheduled = (newEvent) => {
+    console.log('Event scheduled:', newEvent);
+    // You can add logic here to refresh the dashboard data
+    // or show a success message
+  };
+
+  // Add null checks for dashboardSettings
+  if (!dashboardSettings || !dashboardSettings.enabled_modules) {
     return (
       <div className="quick-actions">
         <h3>Quick Actions</h3>
-        <div className="action-buttons">
-          <button 
-            className="action-btn"
-            onClick={() => handleAddClick('student')}
-          >
-            <Users size={18} />
-            <p>Add Student</p>
-          </button>
-          <button 
-            className="action-btn"
-            onClick={() => handleAddClick('teacher')}
-          >
-            <UserPlus size={18} />
-            <p>Add Teacher</p>
-          </button>
-          <button className="action-btn">
-            <BookOpen size={18} />
-            <p>Create Class</p>
-          </button>
-          <button 
-            className="action-btn"
-            onClick={() => setShowAddSubjectModal(true)}
-          >
-            <Bookmark size={18} />
-            <p>Add Subject</p>
-          </button>
-          {dashboardSettings.enabled_modules.events && (
-            <button className="action-btn">
-              <Calendar size={18} />
-              <p>Schedule Event</p>
-            </button>
-          )}
-        </div>
-  
-        {showAddModal && (
-          <AddUserModal 
-            userType={userType}
-            schoolId={school.id}
-            onClose={() => setShowAddModal(false)}
-          />
-        )}
-  
-        {showAddSubjectModal && (
-          <AddSubjectModal
-            schoolId={school.id}
-            onClose={() => setShowAddSubjectModal(false)}
-            onSubjectAdded={() => {
-              setShowAddSubjectModal(false);
-              // You might want to refresh subjects list here if needed
-            }}
-          />
-        )}
+        <div className="loading-actions">Loading quick actions...</div>
       </div>
     );
+  }
+
+  return (
+    <div className="quick-actions">
+      <h3>Quick Actions</h3>
+      <div className="action-buttons">
+        <button 
+          className="action-btn"
+          onClick={() => handleAddClick('student')}
+        >
+          <Users size={18} />
+          <p>Add Student</p>
+        </button>
+        <button 
+          className="action-btn"
+          onClick={() => handleAddClick('teacher')}
+        >
+          <UserPlus size={18} />
+          <p>Add Teacher</p>
+        </button>
+        <button 
+          className="action-btn"
+          onClick={() => setShowAddClassModal(true)}
+        >
+          <BookOpen size={18} />
+          <p>Create Class</p>
+        </button>
+        <button 
+          className="action-btn"
+          onClick={() => setShowAddSubjectModal(true)}
+        >
+          <Bookmark size={18} />
+          <p>Add Subject</p>
+        </button>
+        {dashboardSettings.enabled_modules.events && (
+          <button 
+            className="action-btn"
+            onClick={() => setShowScheduleEventModal(true)}
+          >
+            <Calendar size={18} />
+            <p>Schedule Event</p>
+          </button>
+        )}
+      </div>
+
+      {/* Add User Modal */}
+      {showAddModal && (
+        <AddUserModal 
+          userType={userType}
+          schoolId={school.id}
+          onClose={() => setShowAddModal(false)}
+        />
+      )}
+
+      {/* Add Subject Modal */}
+      {showAddSubjectModal && (
+        <AddSubjectModal
+          schoolId={school.id}
+          onClose={() => setShowAddSubjectModal(false)}
+          onSubjectAdded={() => {
+            setShowAddSubjectModal(false);
+            // You might want to refresh subjects list here if needed
+          }}
+        />
+      )}
+
+      {/* Add Class Modal */}
+      {showAddClassModal && (
+        <AddClassModal
+          schoolId={school.id}
+          onClose={() => setShowAddClassModal(false)}
+          onClassAdded={handleClassAdded}
+        />
+      )}
+
+      {/* Schedule Event Modal */}
+      {showScheduleEventModal && (
+        <ScheduleEventModal
+          schoolId={school.id}
+          onClose={() => setShowScheduleEventModal(false)}
+          onEventScheduled={handleEventScheduled}
+        />
+      )}
+    </div>
+  );
+};
+// Add Class Modal Component
+const AddClassModal = ({ schoolId, onClose, onClassAdded }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    grade_level: '',
+    class_teacher: ''
+  });
+  
+  const [teachersOptions, setTeachersOptions] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Fetch teachers when component mounts
+  useEffect(() => {
+    const fetchTeachers = async () => {
+      try {
+        const token = localStorage.getItem('access_token');
+        
+        const response = await fetch(`/api/schools/${schoolId}/teachers`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (response.ok) {
+          const teachersData = await response.json();
+          setTeachersOptions(teachersData.map(teacher => ({
+            value: teacher.id,
+            label: `${teacher.first_name} ${teacher.last_name}`
+          })));
+        }
+      } catch (err) {
+        console.error('Failed to fetch teachers:', err);
+      }
+    };
+
+    fetchTeachers();
+  }, [schoolId]);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
   };
+
+  const handleTeacherChange = (selectedOption) => {
+    setFormData(prev => ({
+      ...prev,
+      class_teacher: selectedOption ? selectedOption.value : ''
+    }));
+  };
+
+  const validateForm = () => {
+    if (!formData.name.trim()) {
+      setError('Class name is required');
+      return false;
+    }
+    if (!formData.grade_level) {
+      setError('Grade level is required');
+      return false;
+    }
+    if (!formData.class_teacher) {
+      setError('Please assign a teacher to this class');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!validateForm()) return;
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const token = localStorage.getItem('access_token');
+      const payload = {
+        name: formData.name.trim(),
+        grade_level: parseInt(formData.grade_level),
+        class_teacher_id: formData.class_teacher,
+        school_id: schoolId
+      };
+
+      const response = await fetch(`/api/schools/${schoolId}/classes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create class');
+      }
+
+      onClassAdded && onClassAdded(data.class);
+      onClose();
+    } catch (err) {
+      console.error('Error creating class:', err);
+      setError(err.message || 'Failed to create class. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        <div className="modal-header">
+          <h2>
+            <BookOpen size={20} />
+            Create New Class
+          </h2>
+          <button onClick={onClose} className="close-btn">
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <div className="error-message">{error}</div>}
+        
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>Class Name *</label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleInputChange}
+              placeholder="e.g., Grade 8A, Grade 10 East"
+              required
+            />
+          </div>
+          
+          <div className="form-group">
+            <label>Grade Level *</label>
+            <select
+              name="grade_level"
+              value={formData.grade_level}
+              onChange={handleInputChange}
+              required
+            >
+              <option value="">Select grade</option>
+              {[7, 8, 9, 10, 11, 12].map(grade => (
+                <option key={grade} value={grade}>Grade {grade}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="form-group">
+            <label>Assign Teacher *</label>
+            <Select
+              options={teachersOptions}
+              value={teachersOptions.find(option => option.value === formData.class_teacher)}
+              onChange={handleTeacherChange}
+              className="single-select"
+              placeholder="Select a teacher for this class"
+              required
+            />
+          </div>
+          
+          <div className="form-actions">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="cancel-btn"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="submit-btn" 
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Creating...' : 'Create Class'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Schedule Event Modal Component
+const ScheduleEventModal = ({ schoolId, onClose, onEventScheduled }) => {
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    event_type: '',
+    start_date: '',
+    end_date: '',
+    start_time: '',
+    end_time: '',
+    location: '',
+    target_audience: '',
+    is_recurring: false,
+    recurrence_pattern: '',
+    max_participants: '',
+    registration_required: false,
+    registration_deadline: ''
+  });
+  
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const eventTypes = [
+    { value: 'academic', label: 'Academic' },
+    { value: 'sports', label: 'Sports' },
+    { value: 'cultural', label: 'Cultural' },
+    { value: 'meeting', label: 'Meeting' },
+    { value: 'examination', label: 'Examination' },
+    { value: 'holiday', label: 'Holiday' },
+    { value: 'workshop', label: 'Workshop' },
+    { value: 'assembly', label: 'Assembly' },
+    { value: 'other', label: 'Other' }
+  ];
+
+  const targetAudiences = [
+    { value: 'all', label: 'All School' },
+    { value: 'students', label: 'Students Only' },
+    { value: 'teachers', label: 'Teachers Only' },
+    { value: 'parents', label: 'Parents Only' },
+    { value: 'grade_specific', label: 'Specific Grade' },
+    { value: 'staff', label: 'Staff Only' }
+  ];
+
+  const recurrencePatterns = [
+    { value: 'daily', label: 'Daily' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'monthly', label: 'Monthly' },
+    { value: 'yearly', label: 'Yearly' }
+  ];
+
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+  };
+
+  const validateForm = () => {
+    if (!formData.title.trim()) {
+      setError('Event title is required');
+      return false;
+    }
+    if (!formData.event_type) {
+      setError('Event type is required');
+      return false;
+    }
+    if (!formData.start_date) {
+      setError('Start date is required');
+      return false;
+    }
+    if (!formData.start_time) {
+      setError('Start time is required');
+      return false;
+    }
+    if (formData.end_date && formData.end_date < formData.start_date) {
+      setError('End date cannot be before start date');
+      return false;
+    }
+    if (formData.registration_required && !formData.registration_deadline) {
+      setError('Registration deadline is required when registration is enabled');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!validateForm()) return;
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const token = localStorage.getItem('access_token');
+      const payload = {
+        title: formData.title.trim(),
+        description: formData.description.trim(),
+        event_type: formData.event_type,
+        start_date: formData.start_date,
+        end_date: formData.end_date || formData.start_date,
+        start_time: formData.start_time,
+        end_time: formData.end_time,
+        location: formData.location.trim(),
+        target_audience: formData.target_audience,
+        is_recurring: formData.is_recurring,
+        recurrence_pattern: formData.is_recurring ? formData.recurrence_pattern : null,
+        max_participants: formData.max_participants ? parseInt(formData.max_participants) : null,
+        registration_required: formData.registration_required,
+        registration_deadline: formData.registration_required ? formData.registration_deadline : null,
+        school_id: schoolId
+      };
+
+      const response = await fetch(`/api/schools/${schoolId}/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to schedule event');
+      }
+
+      onEventScheduled && onEventScheduled(data.event);
+      onClose();
+    } catch (err) {
+      console.error('Error scheduling event:', err);
+      setError(err.message || 'Failed to schedule event. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content large-modal">
+        <div className="modal-header">
+          <h2>
+            <Calendar size={20} />
+            Schedule New Event
+          </h2>
+          <button onClick={onClose} className="close-btn">
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <div className="error-message">{error}</div>}
+        
+        <form onSubmit={handleSubmit}>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Event Title *</label>
+              <input
+                type="text"
+                name="title"
+                value={formData.title}
+                onChange={handleInputChange}
+                placeholder="e.g., Annual Sports Day"
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Event Type *</label>
+              <select
+                name="event_type"
+                value={formData.event_type}
+                onChange={handleInputChange}
+                required
+              >
+                <option value="">Select event type</option>
+                {eventTypes.map(type => (
+                  <option key={type.value} value={type.value}>{type.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Description</label>
+            <textarea
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+              placeholder="Brief description of the event"
+              rows="3"
+            />
+          </div>
+          
+          <div className="form-row">
+            <div className="form-group">
+              <label>Start Date *</label>
+              <input
+                type="date"
+                name="start_date"
+                value={formData.start_date}
+                onChange={handleInputChange}
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>End Date</label>
+              <input
+                type="date"
+                name="end_date"
+                value={formData.end_date}
+                onChange={handleInputChange}
+              />
+            </div>
+          </div>
+          
+          <div className="form-row">
+            <div className="form-group">
+              <label>Start Time *</label>
+              <input
+                type="time"
+                name="start_time"
+                value={formData.start_time}
+                onChange={handleInputChange}
+                required
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>End Time</label>
+              <input
+                type="time"
+                name="end_time"
+                value={formData.end_time}
+                onChange={handleInputChange}
+              />
+            </div>
+          </div>
+          
+          <div className="form-row">
+            <div className="form-group">
+              <label>Location</label>
+              <input
+                type="text"
+                name="location"
+                value={formData.location}
+                onChange={handleInputChange}
+                placeholder="e.g., Main Hall, Sports Field"
+              />
+            </div>
+            
+            <div className="form-group">
+              <label>Target Audience</label>
+              <select
+                name="target_audience"
+                value={formData.target_audience}
+                onChange={handleInputChange}
+              >
+                <option value="">Select audience</option>
+                {targetAudiences.map(audience => (
+                  <option key={audience.value} value={audience.value}>{audience.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <div className="checkbox-group">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  name="is_recurring"
+                  checked={formData.is_recurring}
+                  onChange={handleInputChange}
+                />
+                Recurring Event
+              </label>
+            </div>
+            
+            {formData.is_recurring && (
+              <select
+                name="recurrence_pattern"
+                value={formData.recurrence_pattern}
+                onChange={handleInputChange}
+                className="mt-2"
+              >
+                <option value="">Select recurrence pattern</option>
+                {recurrencePatterns.map(pattern => (
+                  <option key={pattern.value} value={pattern.value}>{pattern.label}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          
+          <div className="form-group">
+            <div className="checkbox-group">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  name="registration_required"
+                  checked={formData.registration_required}
+                  onChange={handleInputChange}
+                />
+                Registration Required
+              </label>
+            </div>
+            
+            {formData.registration_required && (
+              <div className="form-row mt-2">
+                <div className="form-group">
+                  <label>Max Participants</label>
+                  <input
+                    type="number"
+                    name="max_participants"
+                    value={formData.max_participants}
+                    onChange={handleInputChange}
+                    min="1"
+                    placeholder="Leave blank for unlimited"
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label>Registration Deadline</label>
+                  <input
+                    type="date"
+                    name="registration_deadline"
+                    value={formData.registration_deadline}
+                    onChange={handleInputChange}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="form-actions">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="cancel-btn"
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="submit-btn" 
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Scheduling...' : 'Schedule Event'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
   const PasswordDisplayModal = ({ open, onClose, userData }) => {
     return (
       <Dialog open={open} onClose={onClose}>
@@ -552,6 +1139,11 @@ const MultiSchoolDashboard = () => {
       setError('');
     
       try {
+        // Debug logs
+        console.log('Current user role:', user.role);
+        console.log('JWT token:', localStorage.getItem('access_token'));
+        console.log('Creating user for school:', schoolId);
+    
         const payload = {
           first_name: formData.first_name.trim(),
           last_name: formData.last_name.trim(),
@@ -559,7 +1151,7 @@ const MultiSchoolDashboard = () => {
           school_id: schoolId,
           ...(userType === 'teacher' && {
             email: formData.email.trim(),
-            phone: formData.phone_number.trim(), // Changed to 'phone' for backend
+            phone: formData.phone_number.trim(),
             teacher_id: formData.teacher_id.trim(),
             subjects: formData.subjects
           }),
@@ -569,16 +1161,24 @@ const MultiSchoolDashboard = () => {
           })
         };
     
+        console.log('Request payload:', payload);
+    
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          throw new Error('No authentication token found');
+        }
+    
         const response = await fetch(`http://localhost:5000/api/users/${schoolId}/create`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify(payload)
         });
     
         const data = await response.json();
+        console.log('Response:', data);
     
         if (!response.ok) {
           throw new Error(data.error || 'Failed to create user');
@@ -605,6 +1205,12 @@ const MultiSchoolDashboard = () => {
       } catch (err) {
         console.error('Creation error:', err);
         setError(err.message);
+        
+        // If token is invalid/expired, redirect to login
+        if (err.message.includes('token') || err.message.includes('401') || err.message.includes('403')) {
+          localStorage.removeItem('access_token');
+          navigate('/login');
+        }
       } finally {
         setIsSubmitting(false);
       }

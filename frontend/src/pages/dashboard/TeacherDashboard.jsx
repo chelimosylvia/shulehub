@@ -1,55 +1,67 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { jwtDecode } from 'jwt-decode';
 import { 
-  Layout, BookOpen, Users, Clipboard, Award, UserCheck, Calendar, Plus 
-} from 'react-feather';
+  Users, BookOpen, Calendar, Clipboard, Award, 
+  UserCheck, Bell, Layout, BarChart2, PieChart as PieChartIcon
+} from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import './Dashboard.css';
 
-const TeacherDashboard = ({ user, school, schoolData }) => {
+const SchoolTeacherDashboard = () => {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [school, setSchool] = useState(null);
+  const [dashboardData, setDashboardData] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedClass, setSelectedClass] = useState(null);
-  const [classes, setClasses] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [assignments, setAssignments] = useState([]);
 
   useEffect(() => {
-    const fetchTeacherData = async () => {
+    const initializeDashboard = async () => {
       try {
+        setIsLoading(true);
         const token = localStorage.getItem('access_token');
-        
-        // Fetch classes
-        const classesRes = await fetch(`/api/teachers/${user.id}/classes`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const classesData = await classesRes.json();
-        setClasses(classesData);
-        
-        if (classesData.length > 0) {
-          setSelectedClass(classesData[0].id);
+        if (!token) {
+          navigate('/login');
+          return;
         }
-        
-        // Fetch students
-        const studentsRes = await fetch(`/api/teachers/${user.id}/students`, {
+
+        const decoded = jwtDecode(token);
+        const schoolId = decoded.school_id;
+        const teacherId = decoded.sub;
+
+        const response = await fetch(`/api/schools/${schoolId}/teachers/${teacherId}/dashboard`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        const studentsData = await studentsRes.json();
-        setStudents(studentsData);
-        
-        // Fetch assignments
-        const assignmentsRes = await fetch(`/api/teachers/${user.id}/assignments`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+
+        if (!response.ok) throw new Error('Failed to load dashboard');
+
+        const data = await response.json();
+        setUser({
+          id: teacherId,
+          name: decoded.name,
+          subjects: data.subjects,
+          teacher_id: decoded.teacher_id
         });
-        const assignmentsData = await assignmentsRes.json();
-        setAssignments(assignmentsData);
-      } catch (error) {
-        console.error('Error fetching teacher data:', error);
+        setSchool(data.school);
+        setDashboardData(data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setIsLoading(false);
       }
-      
     };
-    
-    fetchTeacherData();
-  }, [user.id]);
+
+    initializeDashboard();
+  }, [navigate]);
+
+  if (isLoading) return <div className="loading">Loading your dashboard...</div>;
+  if (error) return <div className="error">Error: {error}</div>;
 
   return (
-    <div className="teacher-dashboard">
+    <div className="teacher-dashboard-container">
+      {/* Sidebar Navigation */}
       <div className="dashboard-sidebar">
         <div className="sidebar-header">
           <div className="teacher-avatar">
@@ -57,384 +69,151 @@ const TeacherDashboard = ({ user, school, schoolData }) => {
           </div>
           <div className="teacher-info">
             <h3>{user.name}</h3>
-            <p>{user.subject || 'Teacher'}</p>
+            <p>{user.subjects.join(', ')} • {school.name}</p>
           </div>
         </div>
-        
+
         <nav className="sidebar-nav">
-          <ul>
-            <li className={activeTab === 'dashboard' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('dashboard')}>
-                <Layout size={18} />
-                <span>Dashboard</span>
-              </button>
-            </li>
-            <li className={activeTab === 'classes' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('classes')}>
-                <BookOpen size={18} />
-                <span>My Classes</span>
-              </button>
-            </li>
-            <li className={activeTab === 'students' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('students')}>
-                <Users size={18} />
-                <span>Students</span>
-              </button>
-            </li>
-            <li className={activeTab === 'assignments' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('assignments')}>
-                <ClipboardList size={18} />
-                <span>Assignments</span>
-              </button>
-            </li>
-            <li className={activeTab === 'grades' ? 'active' : ''}>
-              <button onClick={() => setActiveTab('grades')}>
-                <Award size={18} />
-                <span>Grades</span>
-              </button>
-            </li>
-          </ul>
+          <button 
+            className={activeTab === 'dashboard' ? 'active' : ''}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            <Layout size={18} /> Dashboard
+          </button>
+          <button 
+            className={activeTab === 'classes' ? 'active' : ''}
+            onClick={() => setActiveTab('classes')}
+          >
+            <BookOpen size={18} /> My Classes
+          </button>
+          <button 
+            className={activeTab === 'students' ? 'active' : ''}
+            onClick={() => setActiveTab('students')}
+          >
+            <Users size={18} /> Students
+          </button>
+          <button 
+            className={activeTab === 'assignments' ? 'active' : ''}
+            onClick={() => setActiveTab('assignments')}
+          >
+            <Clipboard size={18} /> Assignments
+          </button>
         </nav>
       </div>
-      
-      <div className="dashboard-content">
+
+      {/* Main Content */}
+      <div className="dashboard-main">
         {activeTab === 'dashboard' && (
-          <TeacherOverview 
-            user={user} 
-            school={school} 
-            classes={classes} 
-            students={students}
-            assignments={assignments}
-          />
+          <>
+            <div className="welcome-banner">
+              <h2>Welcome, {user.name.split(' ')[0]}!</h2>
+              <p>{school.name} • {user.subjects.join(', ')} Teacher</p>
+            </div>
+
+            <div className="stats-grid">
+              <div className="stat-card">
+                <BookOpen size={24} />
+                <h3>Classes</h3>
+                <p>{dashboardData.classes.length}</p>
+              </div>
+              <div className="stat-card">
+                <Users size={24} />
+                <h3>Students</h3>
+                <p>{dashboardData.students.total}</p>
+              </div>
+              <div className="stat-card">
+                <Clipboard size={24} />
+                <h3>Assignments Due</h3>
+                <p>{dashboardData.assignments.upcoming.length}</p>
+              </div>
+            </div>
+
+            <div className="chart-container">
+              <h3>Class Performance</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={dashboardData.classes.map(cls => ({
+                  name: cls.name,
+                  average: cls.average_grade
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis domain={[0, 100]} />
+                  <Tooltip />
+                  <Bar dataKey="average" fill="#10B981" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         )}
-        
+
         {activeTab === 'classes' && (
-          <TeacherClasses 
-            classes={classes} 
-            selectedClass={selectedClass}
-            onSelectClass={setSelectedClass}
-          />
-        )}
-        
-        {activeTab === 'students' && (
-          <TeacherStudents 
-            students={students} 
-            classes={classes}
-            selectedClass={selectedClass}
-          />
-        )}
-        
-        {activeTab === 'assignments' && (
-          <TeacherAssignments 
-            assignments={assignments} 
-            classes={classes}
-            selectedClass={selectedClass}
-            setAssignments={setAssignments}
-          />
-        )}
-        
-        {activeTab === 'grades' && (
-          <TeacherGrades 
-            students={students} 
-            assignments={assignments}
-            selectedClass={selectedClass}
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Teacher Sub-Components
-const TeacherOverview = ({ user, school, classes, students, assignments }) => {
-  const pendingGrading = assignments.filter(a => 
-    new Date(a.due_date) <= new Date() && !a.grades_everyone
-  ).length;
-
-  return (
-    <div className="teacher-overview">
-      <div className="welcome-banner">
-        <h2>Welcome, {user.name.split(' ')[0]}!</h2>
-        <p>{school.name} • {user.subject} Department</p>
-      </div>
-      
-      <div className="stats-grid">
-        <StatCard 
-          icon={<BookOpen size={24} />} 
-          title="Classes" 
-          value={classes.length} 
-        />
-        <StatCard 
-          icon={<Users size={24} />} 
-          title="Students" 
-          value={students.length} 
-        />
-        <StatCard 
-          icon={<ClipboardList size={24} />} 
-          title="Pending Grading" 
-          value={pendingGrading} 
-        />
-      </div>
-      
-      <div className="overview-sections">
-        <ClassHighlights classes={classes} />
-        <AssignmentDeadlines assignments={assignments} classes={classes} />
-      </div>
-    </div>
-  );
-};
-
-const StatCard = ({ icon, title, value }) => (
-  <div className="stat-card">
-    <div className="stat-content">
-      <h3>{title}</h3>
-      <p className="stat-value">{value}</p>
-    </div>
-    <div className="stat-icon">{icon}</div>
-  </div>
-);
-
-const ClassHighlights = ({ classes }) => (
-  <div className="classes-summary">
-    <h3>Your Classes</h3>
-    {classes.length > 0 ? (
-      <div className="classes-list">
-        {classes.slice(0, 3).map(classItem => (
-          <div key={classItem.id} className="class-item">
-            <div className="class-info">
-              <h4>{classItem.name}</h4>
-              <p>{classItem.student_count} students</p>
-              <p>Period {classItem.period}</p>
+          <div className="classes-section">
+            <h2>Your Classes</h2>
+            <div className="classes-grid">
+              {dashboardData.classes.map(cls => (
+                <div key={cls.id} className="class-card">
+                  <h3>{cls.name}</h3>
+                  <p>Subject: {cls.subject}</p>
+                  <p>Students: {cls.student_count}</p>
+                  <p>Average Grade: {cls.average_grade}%</p>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
-    ) : (
-      <p className="no-classes">No classes assigned</p>
-    )}
-  </div>
-);
+        )}
 
-const AssignmentDeadlines = ({ assignments, classes }) => (
-  <div className="upcoming-deadlines">
-    <h3>Upcoming Deadlines</h3>
-    {assignments.length > 0 ? (
-      <div className="deadlines-list">
-        {assignments
-          .filter(a => new Date(a.due_date) > new Date())
-          .sort((a, b) => new Date(a.due_date) - new Date(b.due_date))
-          .slice(0, 3)
-          .map(assignment => (
-            <div key={assignment.id} className="deadline-item">
-              <div className="deadline-info">
-                <h4>{assignment.title}</h4>
-                <p className="deadline-class">
-                  {classes.find(c => c.id === assignment.class_id)?.name || 'Unassigned'}
-                </p>
-                <p className="deadline-date">
-                  Due: {new Date(assignment.due_date).toLocaleDateString()}
-                </p>
-              </div>
-              <div className="deadline-status">
-                {assignment.grades_everyone ? (
-                  <span className="status-graded">Graded</span>
-                ) : (
-                  <span className="status-pending">Pending</span>
-                )}
-              </div>
+        {activeTab === 'students' && (
+          <div className="students-section">
+            <h2>Your Students</h2>
+            <div className="students-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Class</th>
+                    <th>Average Grade</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboardData.students.list.map(student => (
+                    <tr key={student.id}>
+                      <td>{student.name}</td>
+                      <td>{student.class}</td>
+                      <td>{student.average_grade}%</td>
+                      <td>
+                        <button className="view-btn">View Profile</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))}
-      </div>
-    ) : (
-      <p className="no-deadlines">No upcoming deadlines</p>
-    )}
-  </div>
-);
+          </div>
+        )}
 
-const TeacherClasses = ({ classes, selectedClass, onSelectClass }) => {
-  return (
-    <div className="teacher-classes">
-      <h2>My Classes</h2>
-      
-      <div className="classes-tabs">
-        {classes.map(classItem => (
-          <button
-            key={classItem.id}
-            className={`class-tab ${selectedClass === classItem.id ? 'active' : ''}`}
-            onClick={() => onSelectClass(classItem.id)}
-          >
-            {classItem.name}
-          </button>
-        ))}
-      </div>
-      
-      {selectedClass && (
-        <ClassDetails 
-          classId={selectedClass} 
-          classInfo={classes.find(c => c.id === selectedClass)} 
-        />
-      )}
-    </div>
-  );
-};
-
-const TeacherStudents = ({ students, classes, selectedClass,onSelectClass }) => {
-  const filteredStudents = selectedClass
-    ? students.filter(s => s.classes.includes(selectedClass))
-    : students;
-
-  return (
-    <div className="teacher-students">
-      <div className="students-header">
-        <h2>Students</h2>
-        <div className="students-filters">
-          <select 
-            value={selectedClass || ''}
-            onChange={(e) => onSelectClass(e.target.value || null)}
-          >
-            <option value="">All Classes</option>
-            {classes.map(classItem => (
-              <option key={classItem.id} value={classItem.id}>
-                {classItem.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      
-      <div className="students-list">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Grade</th>
-              <th>Average</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStudents.map(student => (
-              <tr key={student.id}>
-                <td>{student.name}</td>
-                <td>Grade {student.grade_level}</td>
-                <td>
-                  <span className={`grade-badge ${getGradeClass(student.average_grade)}`}>
-                    {student.average_grade || 'N/A'}%
-                  </span>
-                </td>
-                <td>
-                  <button className="view-btn">View Profile</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-const TeacherAssignments = ({ assignments, classes, selectedClass, setAssignments }) => {
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState('upcoming');
-
-  const filteredAssignments = selectedClass
-    ? assignments.filter(a => a.class_id === selectedClass)
-    : assignments;
-
-  const upcomingAssignments = filteredAssignments
-    .filter(a => new Date(a.due_date) > new Date());
-  
-  const pastAssignments = filteredAssignments
-    .filter(a => new Date(a.due_date) <= new Date());
-
-  return (
-    <div className="teacher-assignments">
-      <div className="assignments-header">
-        <h2>Assignments</h2>
-        <div className="assignments-actions">
-          <select 
-            value={selectedClass || ''}
-            onChange={(e) => onSelectClass(e.target.value || null)}
-          >
-            <option value="">All Classes</option>
-            {classes.map(classItem => (
-              <option key={classItem.id} value={classItem.id}>
-                {classItem.name}
-              </option>
-            ))}
-          </select>
-          <button onClick={() => setShowCreateModal(true)}>
-            <Plus size={18} /> Create Assignment
-          </button>
-        </div>
-      </div>
-
-      <div className="assignments-tabs">
-        <button 
-          className={`tab-btn ${activeTab === 'upcoming' ? 'active' : ''}`}
-          onClick={() => setActiveTab('upcoming')}
-        >
-          Upcoming ({upcomingAssignments.length})
-        </button>
-        <button 
-          className={`tab-btn ${activeTab === 'past' ? 'active' : ''}`}
-          onClick={() => setActiveTab('past')}
-        >
-          Past ({pastAssignments.length})
-        </button>
-      </div>
-
-      <div className="assignments-container">
-        {activeTab === 'upcoming' ? (
-          upcomingAssignments.length > 0 ? (
-            upcomingAssignments.map(assignment => (
-              <TeacherAssignmentCard 
-                key={assignment.id}
-                assignment={assignment}
-                type="upcoming"
-              />
-            ))
-          ) : (
-            <p className="no-assignments">No upcoming assignments</p>
-          )
-        ) : (
-          pastAssignments.length > 0 ? (
-            pastAssignments.map(assignment => (
-              <TeacherAssignmentCard 
-                key={assignment.id}
-                assignment={assignment}
-                type="past"
-              />
-            ))
-          ) : (
-            <p className="no-assignments">No past assignments</p>
-          )
+        {activeTab === 'assignments' && (
+          <div className="assignments-section">
+            <h2>Your Assignments</h2>
+            <div className="assignments-tabs">
+              <button className="active">Upcoming</button>
+              <button>Past</button>
+            </div>
+            <div className="assignments-list">
+              {dashboardData.assignments.upcoming.map(assignment => (
+                <div key={assignment.id} className="assignment-card">
+                  <h3>{assignment.title}</h3>
+                  <p>Class: {assignment.class}</p>
+                  <p>Due: {new Date(assignment.due_date).toLocaleDateString()}</p>
+                  <p>Submissions: {assignment.submissions}/{assignment.total_students}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
-
-      {showCreateModal && (
-        <CreateAssignmentModal 
-          classes={classes}
-          onClose={() => setShowCreateModal(false)}
-          onCreate={(newAssignment) => {
-            setAssignments([...assignments, newAssignment]);
-            setShowCreateModal(false);
-          }}
-        />
-      )}
     </div>
   );
 };
 
-const TeacherGrades = ({ students, assignments, selectedClass }) => {
-  // Implement gradebook view
-  return (
-    <div className="teacher-grades">
-      <h2>Gradebook</h2>
-      {/* Gradebook implementation */}
-    </div>
-  );
-};
-
-export default TeacherDashboard;
+export default SchoolTeacherDashboard;

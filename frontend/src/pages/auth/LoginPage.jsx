@@ -44,154 +44,75 @@ const LoginPage = () => {
 
   const API_BASE_URL = 'http://localhost:5000/api';
 
+  const handleLoginSuccess = (responseData, role) => {
+    // Safely destructure with defaults
+    const {
+      user = {},
+      access_token,
+      school,
+      password_change_required = false
+    } = responseData || {};
+  
+    // Validate minimum required data
+    if (!access_token || !user.id || !user.role) {
+      setError('Invalid login response from server');
+      return;
+    }
+  
+    // Store authentication data
+    localStorage.setItem('access_token', access_token);
+    localStorage.setItem('user_data', JSON.stringify(user));
+    
+    if (school) {
+      localStorage.setItem('school_data', JSON.stringify(school));
+    }
+  
+    setSuccess('Login successful! Redirecting...');
+    
+    // Handle password change requirement
+    if (password_change_required || user.must_change_password) {
+      setTempToken(access_token);
+      setUserData(user);
+      setPasswordChangeRequired(true);
+      return;
+    }
+  
+    // Role-based redirect
+    const redirectPaths = {
+      admin: `/school/${user.school_id}/dashboard`,
+      teacher: `/school/${user.school_id}/teacher/dashboard`,
+      student: `/school/${user.school_id}/student/dashboard`
+    };
+  
+    navigate(redirectPaths[role] || '/');
+  };
+
+  // Admin Login Handler
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     setSuccess('');
-  
+
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/school-admin/login`, {  
+      const response = await fetch(`${API_BASE_URL}/auth/school-admin/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: adminForm.email,
           school_code: adminForm.schoolCode,
-          registration_number: adminForm.registrationNumber  
-        })      
-      });
-  
-      const data = await response.json();
-  
-      if (response.ok) {
-        localStorage.setItem('access_token', data.access_token);
-        localStorage.setItem('user_data', JSON.stringify(data.user));
-        localStorage.setItem('school_data', JSON.stringify(data.school));
-  
-        setSuccess('Login successful! Redirecting to dashboard...');
-        navigate(`/school/${data.school.id}/dashboard`);
-      } else {
-        setError(data.error || 'Login failed. Please check your credentials.');
-      }
-    } catch (err) {
-      console.error('Login error:', err);
-      setError('Network error. Please check your connection and try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStudentLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-  
-    try {
-      // Validate inputs first
-      if (!studentForm.schoolId || !studentForm.admissionNumber || !studentForm.password) {
-        setError('Please fill all fields');
-        setLoading(false);
-        return;
-      }
-  
-      const response = await fetch(`${API_BASE_URL}/auth/student/login`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          school_id: parseInt(studentForm.schoolId, 10), // Convert to integer
-          admission_number: studentForm.admissionNumber,
-          password: studentForm.password
+          registration_number: adminForm.registrationNumber
         })
       });
-  
-      const data = await response.json();
-      
-      console.log('Response status:', response.status);
-      console.log('Response data:', data);
-      
-      if (!response.ok) {
-        // Handle different error scenarios
-        if (response.status === 401) {
-          setError('Invalid credentials. Please check your school ID, admission number, and password.');
-        } else if (data.missing_fields) {
-          setError(`Missing: ${data.missing_fields.join(', ')}`);
-        } else {
-          setError(data.error || data.message || 'Login failed');
-        }
-        return;
-      }
-  
-      handleLoginSuccess(data);
-      
-    } catch (err) {
-      console.error('Login error:', err);
-      setError('Network error. Please check your connection and try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const handleTeacherLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSuccess('');
-  
-    // Validate inputs
-    if (!teacherForm.schoolId || !teacherForm.identifier || !teacherForm.password) {
-      setError('Please fill all fields');
-      setLoading(false);
-      return;
-    }
-  
-    try {
-      const payload = {
-        school_id: parseInt(teacherForm.schoolId, 10),
-        password: teacherForm.password
-      };
-  
-      // Add identifier based on selected type
-      if (teacherForm.identifierType === 'tsc') {
-        if (!/^TSC\d{6}$/i.test(teacherForm.identifier)) {
-          setError('TSC number must be in format TSC123456');
-          setLoading(false);
-          return;
-        }
-        payload.tsc_number = teacherForm.identifier.toUpperCase();
-      } else {
-        if (!/^\d{6,12}$/.test(teacherForm.identifier)) {
-          setError('National ID must be 6-12 digits');
-          setLoading(false);
-          return;
-        }
-        payload.national_id = teacherForm.identifier;
-      }
-  
-      const response = await fetch(`${API_BASE_URL}/auth/teacher/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-  
-      const data = await response.json();
-  
+      const responseData = await response.json();
+
       if (!response.ok) {
-        console.error('Login failed:', {
-          status: response.status,
-          error: data.error,
-          details: data.details
-        });
-        throw new Error(data.error || 'Login failed. Please check your credentials.');
+        throw new Error(responseData.error || 'Login failed. Please check your credentials.');
       }
-  
-      // Use handleLoginSuccess for consistent behavior
-      handleLoginSuccess(data);
-  
+
+      handleLoginSuccess(responseData, 'admin');
+      
     } catch (err) {
       setError(err.message);
     } finally {
@@ -199,36 +120,121 @@ const LoginPage = () => {
     }
   };
 
-  const handleLoginSuccess = (data) => {
-    if (data.password_change_required || data.user?.must_change_password) {
-      setTempToken(data.access_token);
-      setUserData(data.user);
-      setPasswordChangeRequired(true);
-      setSuccess('Please set a new password to continue');
-    } else {
-      // Normal login flow
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
-      localStorage.setItem('user_data', JSON.stringify(data.user));
+  // Student Login Handler
+  const handleStudentLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setSuccess('');
+  
+    try {
+      // Validate inputs
+      if (!studentForm.schoolId || !studentForm.admissionNumber || !studentForm.password) {
+        throw new Error('Please fill all fields');
+      }
+  
+      const response = await fetch(`${API_BASE_URL}/auth/student/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: parseInt(studentForm.schoolId, 10),
+          admission_number: studentForm.admissionNumber,
+          password: studentForm.password
+        })
+      });
+  
+      const responseData = await response.json();
+  
+      if (!response.ok) {
+        throw new Error(
+          response.status === 401 
+            ? 'Invalid credentials. Please check your details.'
+            : responseData.error || 'Login failed'
+        );
+      }
+  
+      // Handle the standardized response
+      handleLoginSuccess(responseData, 'student');
+  
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+
+  const handleTeacherLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setSuccess('');
+  
+    try {
+      // Validate inputs
+      if (!teacherForm.schoolId || !teacherForm.identifier || !teacherForm.password) {
+        throw new Error('Please fill all fields');
+      }
+  
+      const payload = {
+        school_id: teacherForm.schoolId,
+        password: teacherForm.password
+      };
+  
+      // Add identifier based on type
+      if (teacherForm.identifierType === 'tsc') {
+        if (!/^TSC\d{6}$/i.test(teacherForm.identifier)) {
+          throw new Error('TSC number must be in format TSC123456');
+        }
+        payload.tsc_number = teacherForm.identifier.toUpperCase();
+      } else {
+        if (!/^\d{6,12}$/.test(teacherForm.identifier)) {
+          throw new Error('National ID must be 6-12 digits');
+        }
+        payload.national_id = teacherForm.identifier;
+      }
+  
+      const response = await fetch(`${API_BASE_URL}/auth/teacher/login`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          // Remove X-Requested-With if not needed
+        },
+        body: JSON.stringify(payload),
+        credentials: 'include' // Only if using cookies/sessions
+      });
+  
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Login failed. Please check your credentials.');
+      }
+  
+      const responseData = await response.json();
       
-      if (data.user.school_id) {
-        localStorage.setItem('school_data', JSON.stringify({ id: data.user.school_id }));
+      // Store token and user data
+      localStorage.setItem('access_token', responseData.access_token);
+      localStorage.setItem('user', JSON.stringify(responseData.user));
+      
+      // Redirect based on password change requirement
+      if (responseData.user?.must_change_password) {
+        navigate('/change-password', { state: { forceChange: true } });
+      } else {
+        navigate('/teacher/dashboard');
       }
   
       setSuccess('Login successful! Redirecting...');
+  
+    } catch (err) {
+      console.error('Login error:', err);
+      setError(err.message);
       
-      // Redirect to school-specific dashboard
-      if (data.user.role === 'teacher') {
-        navigate(`/school/${data.user.school_id}/teacher/dashboard`);
-      } else if (data.user.role === 'student') {
-        navigate(`/school/${data.user.school_id}/student/dashboard`);
-      } else if (data.user.role === 'admin') {
-        navigate(`/school/${data.user.school_id}/admin/dashboard`);
-      } else {
-        navigate('/dashboard');
-      }
+      // Auto-dismiss error after 5 seconds
+      setTimeout(() => setError(''), 5000);
+    } finally {
+      setLoading(false);
     }
   };
+
   const switchTab = (tab) => {
     setActiveTab(tab);
     setError('');
@@ -270,61 +276,61 @@ const LoginPage = () => {
   
   const handlePasswordChange = async (e) => {
     e.preventDefault();
-    
-    // Validate
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setError("Passwords don't match");
-      return;
-    }
-  
-    const password = passwordForm.newPassword.trim();
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
+    setLoading(true);
+    setError('');
   
     try {
-      setLoading(true);
-      setError('');
-      
+      // Validate passwords
+      if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+        throw new Error("Passwords don't match");
+      }
+      if (passwordForm.newPassword.length < 8) {
+        throw new Error("Password must be at least 8 characters");
+      }
+  
+      // Get token from either temp storage or local storage
+      const token = tempToken || localStorage.getItem('access_token');
+      if (!token) {
+        throw new Error("Authentication token missing");
+      }
+  
       const response = await fetch(`${API_BASE_URL}/auth/force-change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tempToken}`
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          new_password: password
-        })
+          new_password: passwordForm.newPassword
+        }),
+        credentials: 'include' // If using cookies
       });
   
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.message || 'Password change failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Password change failed');
       }
-  // Success
-  localStorage.setItem('access_token', data.access_token);
-  setSuccess('Password changed! Redirecting...');
-  setTimeout(() => {
-    // Redirect to school-specific dashboard
-    if (data.data.user.role === 'teacher') {
-      navigate(`/school/${data.data.user.school_id}/teacher/dashboard`);
-    } else if (data.data.user.role === 'student') {
-      navigate(`/school/${data.data.user.school_id}/student/dashboard`);
-    } else if (data.data.user.role === 'admin') {
-      navigate(`/school/${data.data.user.school_id}/admin/dashboard`);
-    } else {
-      navigate('/dashboard');
-    }
-  }, 1500);
   
-} catch (err) {
-  setError(err.message);
-} finally {
-  setLoading(false);
-}
-};
+      const data = await response.json();
+  
+      // Store new token and user data
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('user_data', JSON.stringify(data.user));
+  
+      setSuccess('Password changed successfully! Redirecting...');
+      
+      // Redirect after delay
+      setTimeout(() => {
+        navigate(`/school/${data.user.school_id}/${data.user.role}/dashboard`);
+      }, 1500);
+  
+    } catch (err) {
+      setError(err.message);
+      setTimeout(() => setError(''), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Password change form
   if (passwordChangeRequired) {

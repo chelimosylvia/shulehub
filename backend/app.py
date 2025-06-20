@@ -63,7 +63,8 @@ def create_app():
         ('routes.gradebook_routes', 'gradebook_bp', '/api/gradebook'),
         ('routes.mobile_routes', 'mobile_bp', '/api/mobile'),
         ('routes.dashboard_routes', 'dashboard_bp', '/api/schools'),
-
+        ('routes.student_dashboard', 'student_bp', '/api/schools'),
+        ('routes.teacher_dashboard', 'teacher_bp', '/api/schools'),
     ]
     
     for module_name, blueprint_name, url_prefix in route_modules:
