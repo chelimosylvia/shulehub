@@ -17,7 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from models import School, User
 from extensions import db
 import traceback
-
+from sqlalchemy import or_
 
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -213,101 +213,110 @@ def teacher_login():
             return jsonify({'error': 'Request must be JSON'}), 400
 
         data = request.get_json()
-        current_app.logger.debug(f"Login attempt with data: {data}")
+        
+        # Log input safely (without password)
+        log_data = {k: v for k, v in data.items() if k != 'password'}
+        current_app.logger.debug(f"Teacher login attempt: {log_data}")
 
-        # Input validation
-        required_fields = ['school_id', 'password']
-        if not all(field in data for field in required_fields):
-            missing = [f for f in required_fields if f not in data]
-            current_app.logger.warning(f"Missing fields: {missing}")
-            return jsonify({'error': f'Missing required fields: {missing}'}), 400
-
-        # Identifier validation
-        identifier = data.get('tsc_number') or data.get('national_id')
-        if not identifier:
-            current_app.logger.warning("No identifier provided")
-            return jsonify({'error': 'Provide either TSC number or National ID'}), 400
-
-        # School ID validation
+        # Validate school ID
         try:
-            school_id = int(data['school_id'])
-        except (ValueError, TypeError):
-            current_app.logger.warning(f"Invalid school_id: {data.get('school_id')}")
-            return jsonify({'error': 'Invalid school ID format'}), 400
+            school_id = int(data.get('school_id'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid school ID'}), 400
 
-        # Find teacher
-        teacher_query = User.query.filter_by(
-            school_id=school_id,
-            role='teacher'
+        # Get identifier based on type
+        identifier_type = 'tsc_number' if 'tsc_number' in data else 'national_id'
+        identifier = data.get(identifier_type, '').strip()
+        
+        if not identifier:
+            return jsonify({'error': f'{identifier_type.replace("_", " ").title()} required'}), 400
+
+        # Find teacher - improved query to handle both TSC and National ID
+        teacher_query = User.query.filter(
+            User.school_id == school_id,
+            User.role == 'teacher',
+            User.is_active == True
         )
 
-        if 'tsc_number' in data:
+        if identifier_type == 'tsc_number':
             teacher = teacher_query.filter(
-                db.func.upper(User.tsc_number) == data['tsc_number'].upper()
+                db.func.upper(User.tsc_number) == identifier.upper()
             ).first()
         else:
-            teacher = teacher_query.filter_by(
-                national_id=data['national_id']
+            teacher = teacher_query.filter(
+                User.national_id == identifier
             ).first()
 
         if not teacher:
-            current_app.logger.warning(
-                f"Teacher not found: school_id={school_id}, "
-                f"identifier={identifier}"
-            )
+            current_app.logger.warning(f"Teacher not found (school: {school_id}, {identifier_type}: {identifier})")
             return jsonify({'error': 'Invalid credentials'}), 401
 
-        # Account status check
-        if not teacher.is_active:
-            current_app.logger.warning(f"Inactive teacher account: {teacher.id}")
-            return jsonify({'error': 'Account is inactive'}), 403
-
         # Password verification
+        password = data.get('password', '').strip()
+        current_app.logger.debug(f"Password check for teacher {teacher.id} (must_change: {teacher.must_change_password})")
+
+        # Handle both hashed and plaintext passwords for first-time login
         password_valid = False
-        if teacher.password_hash:
-            if teacher.password_hash.startswith('$2b$'):  # Bcrypt
-                password_valid = check_password_hash(
-                    teacher.password_hash, 
-                    data['password']
-                )
-            else:  # Legacy fallback
-                password_valid = (teacher.password_hash == data['password'])
-                if password_valid:
-                    # Upgrade to hashed password
-                    teacher.password_hash = generate_password_hash(data['password'])
-                    db.session.commit()
+        if teacher.must_change_password:
+            # Check plaintext system password
+            if teacher.password_hash == password:
+                password_valid = True
+                current_app.logger.debug("Matched plaintext system password")
+            # Check hashed password
+            elif check_password_hash(teacher.password_hash, password):
+                password_valid = True
+                current_app.logger.debug("Matched hashed password")
+        else:
+            # Normal password check
+            password_valid = check_password_hash(teacher.password_hash, password)
+            current_app.logger.debug(f"Normal password check result: {password_valid}")
 
         if not password_valid:
             current_app.logger.warning(f"Invalid password for teacher {teacher.id}")
             return jsonify({'error': 'Invalid credentials'}), 401
 
-        # Token generation
-        access_token = create_access_token(
-            identity=str(teacher.id),  # Ensure string sub claim
-            additional_claims={
-                'school_id': teacher.school_id,
-                'role': 'teacher',
-                'password_change_required': teacher.must_change_password
-            }
-        )
+        # Create appropriate token
+        additional_claims = {
+            'school_id': teacher.school_id,
+            'role': 'teacher',
+            'first_name': teacher.first_name,
+            'last_name': teacher.last_name
+        }
 
-        current_app.logger.info(f"Successful login for teacher {teacher.id}")
-        return jsonify({
-            'access_token': access_token,
-            'user': {
-                'id': teacher.id,
-                'first_name': teacher.first_name,
-                'last_name': teacher.last_name,
-                'email': teacher.email,
-                'role': teacher.role,
-                'school_id': teacher.school_id,
-                'must_change_password': teacher.must_change_password
-            }
-        }), 200
+        if teacher.must_change_password:
+            additional_claims['password_change_required'] = True
+            # Token for password change (no expiration)
+            access_token = create_access_token(
+                identity=str(teacher.id),
+                additional_claims=additional_claims
+            )
+            
+            return jsonify({
+                'access_token': access_token,
+                'user': teacher.to_dict(),
+                'password_change_required': True,
+                'message': 'Please set a new password'
+            }), 200
+        else:
+            # Normal token with expiration
+            access_token = create_access_token(
+                identity=str(teacher.id),
+                additional_claims=additional_claims,
+                expires_delta=timedelta(hours=24)
+            )
+            refresh_token = create_refresh_token(identity=str(teacher.id))
+            
+            return jsonify({
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'user': teacher.to_dict(),
+                'password_change_required': False,
+                'message': 'Login successful'
+            }), 200
 
     except Exception as e:
-        current_app.logger.error(f"Login error: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Login processing failed'}), 500
+        current_app.logger.error(f"Teacher login error: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Login failed'}), 500
         
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)

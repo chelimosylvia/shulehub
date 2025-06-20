@@ -34,6 +34,7 @@ class User(db.Model):
     
     # Relationships
     schools = db.relationship('School', backref='owner', lazy=True, foreign_keys='School.owner_id')
+    school = db.relationship('School', foreign_keys=[school_id], backref='staff')
     enrollments = db.relationship('Enrollment', backref='user', lazy=True)
     classes_teaching = db.relationship('SchoolClass', backref='class_teacher', lazy=True, foreign_keys='SchoolClass.teacher_id')
     grade_entries = db.relationship('GradeEntry', backref='student', lazy=True, foreign_keys='GradeEntry.student_id')
