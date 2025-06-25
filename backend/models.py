@@ -2,6 +2,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
 from extensions import db
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
 
 teacher_subject = db.Table('teacher_subject',
     db.Column('teacher_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
@@ -611,3 +613,230 @@ class LiveClass(db.Model):
     recurrence_pattern = db.Column(db.String(50))  # 'daily' | 'weekly' | etc.
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Forum(db.Model):
+     __tablename__ = 'forums'
+    
+     id = db.Column(db.Integer, primary_key=True)
+     title = db.Column(db.String(255), nullable=False)
+     subject = db.Column(db.String(100), nullable=False)
+     content = db.Column(db.Text, nullable=False)
+     author_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+     replies_count = db.Column(db.Integer, default=0)
+     is_active = db.Column(db.Boolean, default=True)
+     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+     author = db.relationship('User', backref='forum_threads')
+     school = db.relationship('School', backref='forum_threads')
+     replies = db.relationship('ForumReply', backref='forum_thread', lazy='dynamic', cascade='all, delete-orphan')
+    
+     def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'subject': self.subject,
+            'content': self.content,
+            'author': f"{self.author.first_name} {self.author.last_name}",
+            'school': self.school.name,
+            'replies_count': self.replies_count,
+            'created_at': self.created_at.isoformat(),
+            'replies': [reply.to_dict() for reply in self.replies.order_by(ForumReply.created_at.asc())]
+        }
+class ForumReply(db.Model):
+    __tablename__ = 'forum_replies'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.Text, nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    forum_id = db.Column(db.Integer, db.ForeignKey('forums.id'), nullable=False)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    parent_reply_id = db.Column(db.Integer, db.ForeignKey('forum_replies.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    author = db.relationship('User', backref='forum_replies')
+    school = db.relationship('School', backref='forum_replies')
+    parent_reply = db.relationship('ForumReply', remote_side=[id], backref='child_replies')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'content': self.content,
+            'author': f"{self.author.first_name} {self.author.last_name}",
+            'school': self.school.name,
+            'created_at': self.created_at.isoformat(),
+            'parent_reply_id': self.parent_reply_id
+        }
+
+class Competition(db.Model):
+    __tablename__ = 'competitions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    host_school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    deadline = db.Column(db.DateTime, nullable=False)
+    status = db.Column(db.String(20), default='active')  # active, completed, cancelled
+    max_participants = db.Column(db.Integer, nullable=True)
+    prize_description = db.Column(db.Text, nullable=True)
+    rules = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    host_school = db.relationship('School', backref='hosted_competitions')
+    created_by = db.relationship('User', backref='created_competitions')
+    participants = db.relationship('CompetitionParticipant', backref='competition', cascade='all, delete-orphan')
+    
+    @property
+    def participants_count(self):
+        return len(self.participants)
+    
+    @property
+    def leaderboard(self):
+        return sorted(self.participants, key=lambda x: x.score or 0, reverse=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'host_school': self.host_school.name,
+            'created_by': f"{self.created_by.first_name} {self.created_by.last_name}",
+            'deadline': self.deadline.isoformat(),
+            'status': self.status,
+            'participants_count': self.participants_count,
+            'max_participants': self.max_participants,
+            'prize_description': self.prize_description,
+            'rules': self.rules,
+            'created_at': self.created_at.isoformat(),
+            'leaderboard': [p.to_dict() for p in self.leaderboard[:10]]  # Top 10
+        }
+
+class CompetitionParticipant(db.Model):
+    __tablename__ = 'competition_participants'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competitions.id'), nullable=False)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    score = db.Column(db.Integer, default=0)
+    submission_url = db.Column(db.String(500), nullable=True)
+    submission_text = db.Column(db.Text, nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    school = db.relationship('School', backref='competition_participations')
+    teacher = db.relationship('User', backref='competition_participations')
+    
+    # Unique constraint to prevent duplicate participation
+    __table_args__ = (db.UniqueConstraint('competition_id', 'school_id', name='unique_school_competition'),)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'school': self.school.name,
+            'teacher': f"{self.teacher.first_name} {self.teacher.last_name}",
+            'score': self.score,
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
+            'joined_at': self.joined_at.isoformat()
+        }
+
+class TutoringSession(db.Model):
+    __tablename__ = 'tutoring_sessions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    tutor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    time_slot = db.Column(db.DateTime, nullable=False)
+    duration_minutes = db.Column(db.Integer, default=60)
+    max_students = db.Column(db.Integer, default=20)
+    meeting_link = db.Column(db.String(500), nullable=True)
+    meeting_password = db.Column(db.String(50), nullable=True)
+    status = db.Column(db.String(20), default='scheduled')  # scheduled, ongoing, completed, cancelled
+    is_cross_school = db.Column(db.Boolean, default=True)  # Allow students from other schools
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    tutor = db.relationship('User', backref='tutoring_sessions')
+    school = db.relationship('School', backref='tutoring_sessions')
+    enrollments = db.relationship('TutoringEnrollment', backref='session', cascade='all, delete-orphan')
+    
+    @property
+    def enrolled_count(self):
+        return len(self.enrollments)
+    
+    @property
+    def available_slots(self):
+        return max(0, self.max_students - self.enrolled_count)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'subject': self.subject,
+            'description': self.description,
+            'tutor_name': f"{self.tutor.first_name} {self.tutor.last_name}",
+            'school': self.school.name,
+            'time_slot': self.time_slot.isoformat(),
+            'duration_minutes': self.duration_minutes,
+            'enrolled_count': self.enrolled_count,
+            'max_students': self.max_students,
+            'available_slots': self.available_slots,
+            'meeting_link': self.meeting_link,
+            'status': self.status,
+            'is_cross_school': self.is_cross_school,
+            'created_at': self.created_at.isoformat()
+        }
+
+class TutoringEnrollment(db.Model):
+    __tablename__ = 'tutoring_enrollments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('tutoring_sessions.id'), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # For student enrollments
+    teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # For teacher enrollments
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    enrollment_type = db.Column(db.String(20), default='student')  # student, teacher
+    attended = db.Column(db.Boolean, default=False)
+    rating = db.Column(db.Integer, nullable=True)  # 1-5 rating after session
+    feedback = db.Column(db.Text, nullable=True)
+    enrolled_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    student = db.relationship('User', foreign_keys=[student_id], backref='tutoring_enrollments_as_student')
+    teacher = db.relationship('User', foreign_keys=[teacher_id], backref='tutoring_enrollments_as_teacher')
+    school = db.relationship('School', backref='tutoring_enrollments')
+    
+    # Unique constraint to prevent duplicate enrollment
+    __table_args__ = (
+        db.UniqueConstraint('session_id', 'student_id', name='unique_student_session'),
+        db.UniqueConstraint('session_id', 'teacher_id', name='unique_teacher_session'),
+    )
+    
+    def to_dict(self):
+        participant_name = ""
+        if self.student:
+            participant_name = f"{self.student.first_name} {self.student.last_name}"
+        elif self.teacher:
+            participant_name = f"{self.teacher.first_name} {self.teacher.last_name}"
+            
+        return {
+            'id': self.id,
+            'participant_name': participant_name,
+            'school': self.school.name,
+            'enrollment_type': self.enrollment_type,
+            'attended': self.attended,
+            'rating': self.rating,
+            'feedback': self.feedback,
+            'enrolled_at': self.enrolled_at.isoformat()
+        }

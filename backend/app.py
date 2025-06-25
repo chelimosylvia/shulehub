@@ -67,6 +67,8 @@ def create_app():
         ('routes.teacher_dashboard', 'teacher_bp', '/api/schools'),
         ('routes.hub_routes', 'hub_bp', '/api/hub'),
         ('routes.homepage_routes', 'homepage_bp', '/api/homepage'),
+        ('routes.contact_routes', 'contact_bp', '/api/contact'),
+
 
     ]
     
