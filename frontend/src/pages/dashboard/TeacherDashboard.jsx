@@ -2,213 +2,200 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
 import { 
-  Users, BookOpen, Calendar, Clipboard, Award, 
-  UserCheck, Bell, Layout, BarChart2, PieChart as PieChartIcon
+  Users, BookOpen, Calendar, Clipboard, Layout, UserCheck 
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import './Dashboard.css';
+import './TeacherDashboard.css';
 
 const SchoolTeacherDashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [school, setSchool] = useState(null);
-  const [dashboardData, setDashboardData] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [dashboardData, setDashboardData] = useState({ classes: [], students: [], assignments: [] });
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [attendanceClassId, setAttendanceClassId] = useState(null);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [attendanceDate, setAttendanceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [loadingStudents, setLoadingStudents] = useState(false);
 
   useEffect(() => {
     const initializeDashboard = async () => {
       try {
-        setIsLoading(true);
         const token = localStorage.getItem('access_token');
-        if (!token) {
-          navigate('/login');
-          return;
-        }
-
+        if (!token) return navigate('/login');
         const decoded = jwtDecode(token);
-        const schoolId = decoded.school_id;
-        const teacherId = decoded.sub;
 
-        const response = await fetch(`/api/schools/${schoolId}/teachers/${teacherId}/dashboard`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const res = await fetch(`/api/schools/${decoded.school_id}/teacher/dashboard`, {
+          headers: { Authorization: `Bearer ${token}` }
         });
 
-        if (!response.ok) throw new Error('Failed to load dashboard');
+        if (!res.ok) throw new Error('Failed to load dashboard');
+        const data = await res.json();
 
-        const data = await response.json();
         setUser({
-          id: teacherId,
-          name: decoded.name,
-          subjects: data.subjects,
-          teacher_id: decoded.teacher_id
+          id: decoded.sub,
+          name: data.teacher?.full_name || 'Teacher',
+          tscNumber: data.teacher?.tsc_number,
+          nationalId: data.teacher?.national_id
         });
+
         setSchool(data.school);
         setDashboardData(data);
+
       } catch (err) {
-        setError(err.message);
-      } finally {
-        setIsLoading(false);
+        console.error('Dashboard error:', err);
       }
     };
-
     initializeDashboard();
   }, [navigate]);
 
-  if (isLoading) return <div className="loading">Loading your dashboard...</div>;
-  if (error) return <div className="error">Error: {error}</div>;
+  const fetchStudentsForClass = async (classId) => {
+    setLoadingStudents(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`/api/schools/${school.id}/classes/${classId}/students`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const students = await res.json();
+      setAttendanceRecords(students.map(s => ({
+        student_id: s.id,
+        name: s.name,
+        status: 'present',
+        remarks: ''
+      })));
+    } catch (err) {
+      console.error('Failed to fetch students:', err);
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  const handleAttendanceChange = (index, field, value) => {
+    setAttendanceRecords(prev =>
+      prev.map((rec, i) => (i === index ? { ...rec, [field]: value } : rec))
+    );
+  };
+
+  const handleSubmitAttendance = async () => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch(`/api/schools/${school.id}/teacher/attendance`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          date: attendanceDate,
+          class_id: attendanceClassId,
+          records: attendanceRecords
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Submission failed');
+      alert('Attendance recorded successfully');
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  };
 
   return (
-    <div className="teacher-dashboard-container">
-      {/* Sidebar Navigation */}
+    <div className="teacher-dashboard">
+      {/* Sidebar */}
       <div className="dashboard-sidebar">
         <div className="sidebar-header">
-          <div className="teacher-avatar">
-            <UserCheck size={32} />
-          </div>
-          <div className="teacher-info">
-            <h3>{user.name}</h3>
-            <p>{user.subjects.join(', ')} • {school.name}</p>
-          </div>
+          <UserCheck size={40} />
+          <h3>{user?.name}</h3>
         </div>
-
-        <nav className="sidebar-nav">
-          <button 
-            className={activeTab === 'dashboard' ? 'active' : ''}
-            onClick={() => setActiveTab('dashboard')}
-          >
-            <Layout size={18} /> Dashboard
-          </button>
-          <button 
-            className={activeTab === 'classes' ? 'active' : ''}
-            onClick={() => setActiveTab('classes')}
-          >
-            <BookOpen size={18} /> My Classes
-          </button>
-          <button 
-            className={activeTab === 'students' ? 'active' : ''}
-            onClick={() => setActiveTab('students')}
-          >
-            <Users size={18} /> Students
-          </button>
-          <button 
-            className={activeTab === 'assignments' ? 'active' : ''}
-            onClick={() => setActiveTab('assignments')}
-          >
-            <Clipboard size={18} /> Assignments
-          </button>
+        <nav>
+          <button onClick={() => setActiveTab('dashboard')}>Dashboard</button>
+          <button onClick={() => setActiveTab('attendance')}>Record Attendance</button>
         </nav>
       </div>
 
-      {/* Main Content */}
+      {/* Main content */}
       <div className="dashboard-main">
         {activeTab === 'dashboard' && (
           <>
-            <div className="welcome-banner">
-              <h2>Welcome, {user.name.split(' ')[0]}!</h2>
-              <p>{school.name} • {user.subjects.join(', ')} Teacher</p>
-            </div>
-
+            <h1>Welcome back, {user?.name.split(' ')[0]}</h1>
             <div className="stats-grid">
-              <div className="stat-card">
-                <BookOpen size={24} />
-                <h3>Classes</h3>
-                <p>{dashboardData.classes.length}</p>
-              </div>
-              <div className="stat-card">
-                <Users size={24} />
-                <h3>Students</h3>
-                <p>{dashboardData.students.total}</p>
-              </div>
-              <div className="stat-card">
-                <Clipboard size={24} />
-                <h3>Assignments Due</h3>
-                <p>{dashboardData.assignments.upcoming.length}</p>
-              </div>
-            </div>
-
-            <div className="chart-container">
-              <h3>Class Performance</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={dashboardData.classes.map(cls => ({
-                  name: cls.name,
-                  average: cls.average_grade
-                }))}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip />
-                  <Bar dataKey="average" fill="#10B981" />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="stat-card"><BookOpen /> Classes: {dashboardData.classes.length}</div>
+              <div className="stat-card"><Users /> Students: {dashboardData.students.total}</div>
+              <div className="stat-card"><Clipboard /> Assignments: {dashboardData.assignments?.upcoming?.length || 0}</div>
             </div>
           </>
         )}
 
-        {activeTab === 'classes' && (
-          <div className="classes-section">
-            <h2>Your Classes</h2>
-            <div className="classes-grid">
-              {dashboardData.classes.map(cls => (
-                <div key={cls.id} className="class-card">
-                  <h3>{cls.name}</h3>
-                  <p>Subject: {cls.subject}</p>
-                  <p>Students: {cls.student_count}</p>
-                  <p>Average Grade: {cls.average_grade}%</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {activeTab === 'attendance' && (
+          <div className="attendance-section">
+            <h2>Record Attendance</h2>
 
-        {activeTab === 'students' && (
-          <div className="students-section">
-            <h2>Your Students</h2>
-            <div className="students-table">
-              <table>
+            <label>Select Class</label>
+            <select
+              value={attendanceClassId || ''}
+              onChange={(e) => {
+                const selected = parseInt(e.target.value);
+                setAttendanceClassId(selected);
+                fetchStudentsForClass(selected);
+              }}
+            >
+              <option value="">-- Select Class --</option>
+              {dashboardData.classes.map(cls => (
+                <option key={cls.id} value={cls.id}>{cls.name}</option>
+              ))}
+            </select>
+
+            <label>Date</label>
+            <input
+              type="date"
+              value={attendanceDate}
+              onChange={e => setAttendanceDate(e.target.value)}
+            />
+
+            {loadingStudents ? (
+              <p>Loading students...</p>
+            ) : attendanceRecords.length > 0 && (
+              <table className="attendance-table">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Class</th>
-                    <th>Average Grade</th>
-                    <th>Actions</th>
+                    <th>Student</th>
+                    <th>Status</th>
+                    <th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dashboardData.students.list.map(student => (
-                    <tr key={student.id}>
-                      <td>{student.name}</td>
-                      <td>{student.class}</td>
-                      <td>{student.average_grade}%</td>
+                  {attendanceRecords.map((rec, index) => (
+                    <tr key={rec.student_id}>
+                      <td>{rec.name}</td>
                       <td>
-                        <button className="view-btn">View Profile</button>
+                        <select
+                          value={rec.status}
+                          onChange={e => handleAttendanceChange(index, 'status', e.target.value)}
+                        >
+                          <option value="present">Present</option>
+                          <option value="absent">Absent</option>
+                          <option value="late">Late</option>
+                          <option value="excused">Excused</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={rec.remarks}
+                          onChange={e => handleAttendanceChange(index, 'remarks', e.target.value)}
+                        />
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
+            )}
 
-        {activeTab === 'assignments' && (
-          <div className="assignments-section">
-            <h2>Your Assignments</h2>
-            <div className="assignments-tabs">
-              <button className="active">Upcoming</button>
-              <button>Past</button>
-            </div>
-            <div className="assignments-list">
-              {dashboardData.assignments.upcoming.map(assignment => (
-                <div key={assignment.id} className="assignment-card">
-                  <h3>{assignment.title}</h3>
-                  <p>Class: {assignment.class}</p>
-                  <p>Due: {new Date(assignment.due_date).toLocaleDateString()}</p>
-                  <p>Submissions: {assignment.submissions}/{assignment.total_students}</p>
-                </div>
-              ))}
-            </div>
+            {attendanceRecords.length > 0 && (
+              <button className="submit-btn" onClick={handleSubmitAttendance}>
+                Submit Attendance
+              </button>
+            )}
           </div>
         )}
       </div>

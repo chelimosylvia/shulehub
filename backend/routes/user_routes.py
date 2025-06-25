@@ -1,13 +1,14 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from werkzeug.security import generate_password_hash
-from models import User, School, Subject, teacher_subject
+from models import User, School, Subject, teacher_subject, SchoolClass, Enrollment
 from sqlalchemy.exc import IntegrityError
 from extensions import db
 from datetime import datetime
 import traceback
 import string
 import secrets
+import re
 
 user_bp = Blueprint('users', __name__, url_prefix='/api/users')
 
@@ -44,7 +45,7 @@ def create_user(school_id):
 
         # Field requirements by role
         required_fields = {
-            'student': ['first_name', 'last_name', 'admission_number', 'grade_level'],
+            'student': ['first_name', 'last_name', 'admission_number', 'class_id', 'parent_phone'],
             'teacher': ['first_name', 'last_name', 'email'],
             'school_admin': ['first_name', 'last_name', 'email']
         }
@@ -90,17 +91,31 @@ def create_user(school_id):
 
         # ===== ROLE-SPECIFIC PROCESSING =====
         if role == 'student':
-            # Grade level validation (7-12 only)
-            try:
-                grade_level = int(data['grade_level'])
-                if grade_level < 7 or grade_level > 12:
-                    return jsonify({'error': 'Grade level must be between 7-12'}), 400
-            except (ValueError, TypeError):
-                return jsonify({'error': 'Invalid grade level format'}), 400
+            # Validate class exists and belongs to school
+            class_id = data.get('class_id')
+            school_class = SchoolClass.query.filter_by(
+                id=class_id,
+                school_id=school_id,
+                is_active=True
+            ).first()
+            
+            if not school_class:
+                return jsonify({'error': 'Invalid or inactive class specified'}), 400
+
+            # Validate class capacity
+            if school_class.current_enrollment >= school_class.capacity:
+                return jsonify({
+                    'error': f'Class {school_class.name} has reached its capacity of {school_class.capacity} students'
+                }), 400
+
+            # Validate parent phone format
+            parent_phone = data.get('parent_phone', '').strip()
+            if not re.match(r'^\+?[\d\s-]{10,15}$', parent_phone):
+                return jsonify({'error': 'Invalid parent phone number format'}), 400
 
             user_data.update({
                 'admission_number': data['admission_number'].strip().upper(),
-                'grade_level': grade_level,
+                'parent_phone': parent_phone,
                 'email': None,
                 'tsc_number': None,
                 'national_id': None,
@@ -207,12 +222,35 @@ def create_user(school_id):
             
             db.session.commit()
 
+            # For students, create enrollment record
+            if role == 'student':
+                # Get current academic year (you might want to make this configurable)
+                current_year = datetime.now().year
+                academic_year = f"{current_year}-{current_year + 1}"
+                
+                enrollment = Enrollment(
+                    user_id=new_user.id,
+                    school_id=school_id,
+                    class_id=class_id,
+                    admission_number=user_data['admission_number'],
+                    enrollment_date=datetime.utcnow().date(),
+                    status='active',
+                    academic_year=academic_year
+                )
+                db.session.add(enrollment)
+                
+                # Update class enrollment count
+                school_class.current_enrollment += 1
+                
+                db.session.commit()
+
             response_data = {
                 'message': f"{role.title()} created successfully",
                 'user_id': new_user.id,
                 'temporary_password': default_password,
                 'password_change_required': True,
-                'user': new_user.to_dict()
+                'user': new_user.to_dict(),
+                'enrollment': enrollment.to_dict() if role == 'student' else None
             }
 
             return jsonify(response_data), 201
@@ -397,3 +435,28 @@ def update_user(user_id):
         db.session.rollback()
         traceback.print_exc()
         return jsonify({'error': 'Failed to update user'}), 500
+
+@user_bp.route('/<int:user_id>/dashboard-settings', methods=['PUT'])
+@jwt_required()
+def update_user_dashboard_settings(user_id):
+    current_user_id = get_jwt_identity()
+    if current_user_id != user_id:
+        return jsonify({'error': 'Unauthorized access'}), 403
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Missing settings data'}), 400
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    try:
+        # Example logic: store user-level branding preference in a JSON field
+        user.dashboard_settings = data  # adjust based on your schema
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'message': 'User settings saved', 'user': user.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update settings', 'details': str(e)}), 500

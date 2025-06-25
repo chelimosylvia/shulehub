@@ -1,45 +1,29 @@
-import React, { createContext, useState, useEffect } from "react";
+// SchoolContext.js
+import React, { createContext, useState, useEffect } from 'react';
 
 export const SchoolContext = createContext();
 
 export const SchoolProvider = ({ children }) => {
-  const [schools, setSchools] = useState([]);
+  const [currentSchoolId, setCurrentSchoolId] = useState(() => {
+    // Try to get from localStorage first
+    const savedId = localStorage.getItem('currentSchoolId');
+    return savedId ? Number(savedId) : null;
+  });
 
-  const fetchSchools = async () => {
-    const token = localStorage.getItem("token"); // make sure your login saves token here
-
-    if (!token) {
-      console.warn("No token found, skipping school fetch.");
-      return;
-    }
-
-    try {
-      const response = await fetch("http://localhost:5000/api/schools", {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include", // optional, for cookies
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSchools(data.schools);
-      } else {
-        console.error("Failed to fetch schools:", response.status);
-      }
-    } catch (error) {
-      console.error("Error fetching schools:", error);
+  // Add this function to update both state and localStorage
+  const updateSchoolId = (newId) => {
+    if (newId && !isNaN(newId)) {
+      setCurrentSchoolId(Number(newId));
+      localStorage.setItem('currentSchoolId', newId.toString());
     }
   };
 
-  useEffect(() => {
-    fetchSchools();
-  }, []);
-
   return (
-    <SchoolContext.Provider value={{ schools }}>
+    <SchoolContext.Provider value={{ 
+      currentSchoolId,
+      setCurrentSchoolId: updateSchoolId,
+      isValidSchoolId: !!currentSchoolId && currentSchoolId > 0
+    }}>
       {children}
     </SchoolContext.Provider>
   );

@@ -1,6 +1,7 @@
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
 from extensions import db
+from sqlalchemy.dialects.postgresql import JSONB
 
 teacher_subject = db.Table('teacher_subject',
     db.Column('teacher_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
@@ -24,7 +25,10 @@ class User(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    dashboard_background = db.Column(db.String(100), default=None)
+    dashboard_font_color = db.Column(db.String(100), default=None)
+    parent_phone = db.Column(db.String(20), nullable=True)
+
     # Student/Teacher specific fields
     admission_number = db.Column(db.String(50), unique=True, nullable=True)  # For students
     tsc_number = db.Column(db.String(50), unique=True, nullable=True)
@@ -40,7 +44,7 @@ class User(db.Model):
     grade_entries = db.relationship('GradeEntry', backref='student', lazy=True, foreign_keys='GradeEntry.student_id')
     notifications = db.relationship('Notification', backref='user', lazy=True)
     dashboard_preferences = db.relationship('UserDashboardPreferences', backref='user', uselist=False, cascade='all, delete-orphan')
-    activities = db.relationship('Activity', backref='user', lazy=True)
+    # Removed the duplicate activities relationship since it's defined in Activity model
     subjects = db.relationship('Subject', secondary=teacher_subject, back_populates='teachers', lazy='dynamic')
 
     __table_args__ = (
@@ -69,6 +73,7 @@ class User(db.Model):
             'school_id': self.school_id,
             'admission_number': self.admission_number,
             'tsc_number': self.tsc_number,
+            'national_id': self.national_id,
             'grade_level': self.grade_level,
             'subjects': [subject.to_dict() for subject in self.subjects] if self.role == 'teacher' else None,
             'is_active': self.is_active,
@@ -99,6 +104,8 @@ class School(db.Model):
     level = db.Column(db.String(100), default='high school')  # default matches your route
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    branding_background = db.Column(db.String(100), default="#ffffff")
+    branding_font_color = db.Column(db.String(100), default="#000000")
 
     # Relationships
     enrollments = db.relationship('Enrollment', backref='school', lazy=True, cascade='all, delete-orphan')
@@ -278,9 +285,11 @@ class Attendance(db.Model):
     remarks = db.Column(db.String(255))
     recorded_by = db.Column(db.Integer, db.ForeignKey('users.id'))  # usually the teacher
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
 
     student = db.relationship('User', foreign_keys=[student_id])
     teacher = db.relationship('User', foreign_keys=[recorded_by])
+    school = db.relationship('School', backref='attendance_records')
 # ------------------ ASSESSMENT ------------------
 
 class Assessment(db.Model):
@@ -406,10 +415,14 @@ class Activity(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
-    activity_type = db.Column(db.String(50), nullable=False)  # enrollment, attendance, fee, grade, etc.
+    activity_type = db.Column(db.String(50), nullable=False)  # e.g., 'student_added', 'teacher_added'
     description = db.Column(db.Text, nullable=False)
-    activity_data = db.Column(db.JSON)  # Changed from 'metadata' to 'activity_data'
+    activity_data = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    school = db.relationship('School', backref='school_activities')  # Changed backref name
+    user = db.relationship('User', backref='user_activities')  # Changed backref name
     
     def to_dict(self):
         return {
@@ -417,14 +430,14 @@ class Activity(db.Model):
             'activity_type': self.activity_type,
             'description': self.description,
             'user': self.user.full_name if self.user else 'System',
-            'metadata': self.activity_data,  # Still returns 'metadata' in API response
+            'metadata': self.activity_data,
             'created_at': self.created_at.isoformat(),
-            'time_ago': self.get_time_ago()
+            'time_ago': self.get_time_ago(),
+            'icon': self.get_icon()
         }
     
     def get_time_ago(self):
         """Calculate human-readable time difference"""
-        from datetime import datetime
         diff = datetime.utcnow() - self.created_at
         
         if diff.days > 0:
@@ -437,6 +450,34 @@ class Activity(db.Model):
             return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
         else:
             return "Just now"
+    
+    def get_icon(self):
+        """Return appropriate icon based on activity type"""
+        icon_map = {
+            'student_added': 'User',
+            'teacher_added': 'UserCheck',
+            'fee_payment': 'DollarSign',
+            'subject_added': 'BookOpen',
+            'class_added': 'BookOpen',
+            'default': 'Activity'
+        }
+        return icon_map.get(self.activity_type, icon_map['default'])
+
+# activity_logger.py
+def log_activity(school_id, user_id, activity_type, description, data=None):
+    """
+    Utility function to log an activity
+    """
+    activity = Activity(
+        school_id=school_id,
+        user_id=user_id,
+        activity_type=activity_type,
+        description=description,
+        activity_data=data or {}
+    )
+    db.session.add(activity)
+    db.session.commit()
+    return activity
 
 class SchoolAnnouncement(db.Model):
     __tablename__ = 'school_announcements'
@@ -447,7 +488,7 @@ class SchoolAnnouncement(db.Model):
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
     priority = db.Column(db.Enum('low', 'medium', 'high', 'urgent', name='announcement_priority'), default='medium')
-    target_audience = db.Column(db.JSON, default=lambda: ['all'])  # ['all', 'teachers', 'students', 'parents']
+    target_audience = db.Column(JSONB, nullable=False, default=['all'])    
     is_published = db.Column(db.Boolean, default=False)
     publish_date = db.Column(db.DateTime)
     expiry_date = db.Column(db.DateTime)
@@ -477,15 +518,20 @@ class Subject(db.Model):
     __tablename__ = 'subjects'
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), unique=True, nullable=False)
-    code = db.Column(db.String(20), unique=True)
+    name = db.Column(db.String(100), nullable=False)  # <-- No unique=True here
+    code = db.Column(db.String(20))                   # <-- No unique=True here
     description = db.Column(db.Text)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    teachers = db.relationship('User', secondary=teacher_subject, back_populates='subjects')
-    
+
+    __table_args__ = (
+        db.UniqueConstraint('school_id', 'name', name='uq_subject_name_per_school'),
+        db.UniqueConstraint('school_id', 'code', name='uq_subject_code_per_school'),
+    )
+    #relationships
+    teachers = db.relationship('User',secondary=teacher_subject,back_populates='subjects')
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -496,3 +542,72 @@ class Subject(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+ # General (public) resources
+class GeneralResource(db.Model):
+    __tablename__ = 'general_resources'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    file_url = db.Column(db.String(255), nullable=False)
+    thumbnail_url = db.Column(db.String(255))
+    resource_type = db.Column(db.String(50), nullable=False)  # 'past_paper' | 'notes' | 'video'
+    subject = db.Column(db.String(50))
+    year = db.Column(db.Integer)
+    downloads = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # ↳ ownership
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    uploader = db.relationship('User', backref='general_resources')
+
+# ──────────────────────────────────────────────────────────
+# ▶︎ Rotating banners shown on homepage
+class Banner(db.Model):
+    __tablename__ = 'banners'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    image_url = db.Column(db.String(255))
+    target_url = db.Column(db.String(255))
+    banner_type = db.Column(db.String(50), nullable=False)  # 'resource' | 'class' | 'discussion'
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+
+# ──────────────────────────────────────────────────────────
+# ▶︎ Cross‑school live classes
+class LiveClass(db.Model):
+    __tablename__ = 'live_classes'
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    subject = db.Column(db.String(50), nullable=False)
+
+    teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    teacher = db.relationship('User', backref='live_classes')
+
+    start_time = db.Column(db.DateTime, nullable=False)
+    end_time = db.Column(db.DateTime, nullable=False)
+    meeting_link = db.Column(db.String(255), nullable=False)
+
+    max_participants = db.Column(db.Integer)
+    registered_count = db.Column(db.Integer, default=0)
+
+    is_recurring = db.Column(db.Boolean, default=False)
+    recurrence_pattern = db.Column(db.String(50))  # 'daily' | 'weekly' | etc.
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

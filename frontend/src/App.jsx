@@ -8,6 +8,7 @@ import Dashboard from './pages/dashboard/Dashboard';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import StudentDashboard from './pages/dashboard/StudentDashboard';
 import TeacherDashboard from './pages/dashboard/TeacherDashboard';
+import Hub from './pages/Hub';
 
 const App = () => {
   return (
@@ -18,7 +19,7 @@ const App = () => {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        
+        <Route path="/hub" element={<Hub />} />
         {/* School routes */}
         <Route path="/school/:schoolId">
           {/* Admin dashboard */}

@@ -1,8 +1,8 @@
 import random
 import string
 from datetime import datetime
-from flask import Blueprint, request, jsonify
-from models import School, User, Subject
+from flask import Blueprint, request, jsonify, current_app
+from models import School, User, Subject, SchoolClass, SchoolAnnouncement
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from extensions import db
 import traceback
@@ -185,25 +185,38 @@ def add_school_subject(school_id):
             
         data = request.get_json()
         name = data.get('name', '').strip()
+        code = data.get('code', '').strip()
         
         if not name:
             return jsonify({'error': 'Subject name is required'}), 400
 
-        # Check for duplicate subject (case-insensitive)
+        # Check for duplicate subject name (case-insensitive, within school)
         existing_subject = Subject.query.filter(
             db.func.lower(Subject.name) == db.func.lower(name),
             Subject.school_id == school_id
         ).first()
         
         if existing_subject:
-            return jsonify({'error': 'Subject already exists in this school'}), 400
+            return jsonify({'error': 'Subject with this name already exists in this school'}), 400
+
+        # Check for duplicate subject code (if provided, within school)
+        if code:
+            existing_code = Subject.query.filter(
+                db.func.lower(Subject.code) == db.func.lower(code),
+                Subject.school_id == school_id
+            ).first()
+            
+            if existing_code:
+                return jsonify({'error': 'Subject with this code already exists in this school'}), 400
 
         # Create new subject
         new_subject = Subject(
             name=name,
-            code=data.get('code', '').strip(),
+            code=code,
             description=data.get('description', '').strip(),
-            school_id=school_id
+            school_id=school_id,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
         )
         
         db.session.add(new_subject)
@@ -223,46 +236,211 @@ def add_school_subject(school_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-        
+
 @school_bp.route('/<int:school_id>/subjects', methods=['GET'])
 @jwt_required()
-def get_school_subjects(school_id):
+def get_all_subjects_for_school(school_id):
     try:
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+
+        if not current_user or current_user.role not in ['school_admin', 'teacher', 'system_owner']:
+            return jsonify({'error': 'Unauthorized'}), 403
+
+        school = School.query.get(school_id)
+        if not school:
+            return jsonify({'error': 'School not found'}), 404
+
         subjects = Subject.query.filter_by(school_id=school_id).all()
-        return jsonify([{
-            'id': subject.id,
-            'name': subject.name,
-            'code': subject.code
-        } for subject in subjects]), 200
+
+        return jsonify({
+            "subjects": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "code": s.code
+                } for s in subjects
+            ]
+        }), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@school_bp.route('/<int:school_id>/subjects/<int:subject_id>', methods=['PUT', 'DELETE'])
+
+@school_bp.route('/<int:school_id>/dashboard-settings', methods=['PUT'])
 @jwt_required()
-def manage_school_subject(school_id, subject_id):
+def update_school_dashboard_settings(school_id):
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if not user or user.role not in ['school_admin', 'system_owner']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    school = School.query.get(school_id)
+    if not school:
+        return jsonify({'error': 'School not found'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Missing settings data'}), 400
+
+    # Example update logic (adjust to your schema)
     try:
-        subject = Subject.query.filter_by(id=subject_id, school_id=school_id).first_or_404()
-        
-        if request.method == 'PUT':
-            data = request.get_json()
-            if 'name' in data:
-                subject.name = data['name'].strip()
-            if 'code' in data:
-                subject.code = data['code'].strip()
-            if 'description' in data:
-                subject.description = data['description'].strip()
-            
-            db.session.commit()
-            return jsonify(subject.to_dict()), 200
-            
-        elif request.method == 'DELETE':
-            db.session.delete(subject)
-            db.session.commit()
-            return jsonify({'message': 'Subject deleted successfully'}), 200
-            
+        branding = data.get('school_branding', {})
+        school.branding = branding  # or update specific fields
+        school.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'message': 'Settings updated', 'school': school.to_dict()}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Failed to update settings', 'details': str(e)}), 500
+
+@school_bp.route('/<int:school_id>/teachers', methods=['GET'])
+@jwt_required()
+def get_school_teachers(school_id):
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        school = School.query.get(school_id)
+        if not school:
+            return jsonify({'error': 'School not found'}), 404
+
+        # Check permissions
+        if not ((user.role in ['school_admin', 'admin', 'system_owner']) and user.school_id == school_id):
+            return jsonify({'error': 'Insufficient permissions to view teachers'}), 403
+
+        teachers = User.query.filter_by(school_id=school_id, role='teacher', is_active=True).all()
+
+        return jsonify({'teachers': [t.to_dict() for t in teachers]}), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch teachers', 'details': str(e)}), 500
+
+@school_bp.route('/<int:school_id>/students', methods=['GET'])
+@jwt_required()
+def get_school_students(school_id):
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        school = School.query.get(school_id)
+        if not school:
+            return jsonify({'error': 'School not found'}), 404
+
+        if not ((user.role in ['school_admin', 'admin', 'system_owner']) and user.school_id == school_id):
+            return jsonify({'error': 'Insufficient permissions to view students'}), 403
+
+        students = User.query.filter_by(school_id=school_id, role='student', is_active=True).all()
+
+        return jsonify({'students': [s.to_dict() for s in students]}), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch students', 'details': str(e)}), 500
+
+@school_bp.route('/<int:school_id>/classes', methods=['POST'])
+@jwt_required()
+def add_class(school_id):
+    try:
+        data = request.get_json()
+
+        name = data.get('name')
+        level = data.get('level')  # Changed from grade_level to level
+        teacher_id = data.get('class_teacher_id')
+
+        if not name or not level or not teacher_id:  # Check for level instead
+            return jsonify({'error': 'Missing required fields'}), 400
+
+        school = School.query.get_or_404(school_id)
+
+        new_class = SchoolClass(
+            name=name,
+            level=level,  # Use level instead of grade_level
+            school_id=school.id,
+            teacher_id=teacher_id
+        )
+
+        db.session.add(new_class)
+        db.session.commit()
+
+        return jsonify({
+            'message': 'Class created',
+            'class': new_class.to_dict()  # Use the model's to_dict method
+        }), 201
+
+    except Exception as e:
+        current_app.logger.error(f"Error creating class: {str(e)}")
+        return jsonify({'error': 'Failed to create class', 'details': str(e)}), 500
+
+@school_bp.route('/<int:school_id>/announcements', methods=['POST'])
+@jwt_required()
+def create_announcement(school_id):
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if user.role != 'school_admin':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json()
+    required = ['title', 'content', 'priority', 'target_audience']
+    if not all(field in data for field in required):
+        return jsonify({'error': 'Missing fields'}), 400
+
+    announcement = SchoolAnnouncement(
+        school_id=school_id,
+        author_id=user_id,
+        title=data['title'],
+        content=data['content'],
+        priority=data['priority'],
+        target_audience=data['target_audience'],
+        is_published=True,
+        publish_date=datetime.utcnow()
+    )
+    db.session.add(announcement)
+    db.session.commit()
+    return jsonify(announcement.to_dict()), 201
+
+@school_bp.route('/<int:school_id>/announcements', methods=['GET'])
+@jwt_required()
+def get_announcements(school_id):
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    now = datetime.utcnow()
+    
+    # Base query
+    query = SchoolAnnouncement.query.filter(
+        SchoolAnnouncement.school_id == school_id,
+        SchoolAnnouncement.is_published == True,
+        SchoolAnnouncement.publish_date <= now,
+        (SchoolAnnouncement.expiry_date == None) | (SchoolAnnouncement.expiry_date > now)
+    )
+    
+    # For JSON array contains check (PostgreSQL specific)
+    if hasattr(SchoolAnnouncement.target_audience, 'astext'):
+        # Using PostgreSQL jsonb contains operator @>
+        query = query.filter(
+            or_(
+                SchoolAnnouncement.target_audience.astext == '["all"]',
+                SchoolAnnouncement.target_audience.astext.like(f'%"{user.role}"%')
+            )
+        )
+    else:
+        # Fallback for other databases
+        query = query.filter(
+            or_(
+                SchoolAnnouncement.target_audience.contains(['all']),
+                SchoolAnnouncement.target_audience.contains([user.role])
+            )
+        )
+    
+    announcements = query.order_by(SchoolAnnouncement.publish_date.desc()).all()
+    return jsonify([a.to_dict() for a in announcements])
+
 
 
 
@@ -342,97 +520,6 @@ def update_school(school_id):
         db.session.rollback()
         return jsonify({'error': 'Failed to update school', 'details': str(e)}), 500
 
-# Add users to school (only school admin or system admin)
-@school_bp.route('/<int:school_id>/users', methods=['POST'])
-@jwt_required()
-def add_school_user(school_id):
-    try:
-        data = request.get_json()
-        user_id = get_jwt_identity()
-        current_user = User.query.get(user_id)
-        
-        if not current_user:
-            return jsonify({'error': 'User not found'}), 404
-
-        school = School.query.filter_by(id=school_id, is_active=True).first()
-        if not school:
-            return jsonify({'error': 'School not found'}), 404
-
-        # Check permissions
-        if not ((current_user.role == 'school_admin' and current_user.school_id == school_id) or 
-                current_user.role == 'admin'):
-            return jsonify({'error': 'Insufficient permissions. Only school admins can add users'}), 403
-
-        # Validate required fields
-        required_fields = ['email', 'first_name', 'last_name', 'role']
-        for field in required_fields:
-            if field not in data or not data[field]:
-                return jsonify({'error': f'{field} is required'}), 400
-
-        # Validate role
-        valid_roles = ['student', 'teacher']
-        if data['role'] not in valid_roles:
-            return jsonify({'error': 'Only students and teachers can be added to schools'}), 400
-
-        # Check if email already exists
-        if User.query.filter_by(email=data['email'].lower().strip()).first():
-            return jsonify({'error': 'Email already registered'}), 409
-
-        # Generate default password
-        default_password = generate_default_password()
-
-        # Create new user
-        new_user = User(
-            email=data['email'].lower().strip(),
-            first_name=data['first_name'].strip(),
-            last_name=data['last_name'].strip(),
-            phone=data.get('phone', '').strip(),
-            role=data['role'],
-            school_id=school_id,
-            force_password_change=True,  # Force password change on first login
-            is_active=True
-        )
-        new_user.set_password(default_password)
-
-        db.session.add(new_user)
-        db.session.commit()
-
-        return jsonify({
-            'message': 'User added successfully',
-            'user': new_user.to_dict(),
-            'default_password': default_password,
-            'note': 'User must change password on first login'
-        }), 201
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': 'Failed to add user', 'details': str(e)}), 500
-
-# Get all users in a school
-@school_bp.route('/<int:school_id>/users', methods=['GET'])
-@jwt_required()
-def get_school_users(school_id):
-    try:
-        user_id = get_jwt_identity()
-        current_user = User.query.get(user_id)
-
-        if not current_user:
-            return jsonify({'error': 'User not found'}), 404
-
-        school = School.query.filter_by(id=school_id, is_active=True).first()
-        if not school:
-            return jsonify({'error': 'School not found'}), 404
-
-        # Permission check
-        if not ((current_user.role == 'school_admin' and current_user.school_id == school_id) or
-                current_user.role == 'admin'):
-            return jsonify({'error': 'Insufficient permissions to view users in this school'}), 403
-
-        users = User.query.filter_by(school_id=school_id, is_active=True).all()
-        return jsonify({'users': [user.to_dict() for user in users]}), 200
-
-    except Exception as e:
-        return jsonify({'error': 'Failed to fetch users', 'details': str(e)}), 500
 
 # Soft delete a school (only system admin)
 @school_bp.route('/<int:school_id>', methods=['DELETE'])
@@ -462,66 +549,6 @@ def delete_school(school_id):
         db.session.rollback()
         return jsonify({'error': 'Failed to delete school', 'details': str(e)}), 500
 
-# Add a class to a school
-@school_bp.route('/<int:school_id>/classes', methods=['POST'])
-@jwt_required()
-def add_school_class(school_id):
-    try:
-        data = request.get_json()
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-
-        school = School.query.filter_by(id=school_id, is_active=True).first()
-        if not school:
-            return jsonify({'error': 'School not found'}), 404
-
-        # Check permissions
-        if not ((user.role == 'school_admin' and user.school_id == school_id) or 
-                user.role == 'admin'):
-            return jsonify({'error': 'Insufficient permissions'}), 403
-
-        class_level = data.get('class_level', '').strip().lower()
-        section = data.get('section', '').strip()
-        capacity = data.get('capacity', 0)
-        description = data.get('description', '').strip()
-
-        if not is_valid_class_level(class_level):
-            return jsonify({'error': f'class_level must be one of the allowed high school levels'}), 400
-
-        if not section:
-            return jsonify({'error': 'Section is required'}), 400
-
-        # Check for duplicate class in the same school
-        existing_class = SchoolClass.query.filter_by(
-            school_id=school_id,
-            class_level=class_level,
-            section=section,
-            is_active=True
-        ).first()
-        
-        if existing_class:
-            return jsonify({'error': 'This class and section combination already exists'}), 409
-
-        new_class = SchoolClass(
-            school_id=school_id,
-            class_level=class_level,
-            section=section,
-            capacity=capacity,
-            description=description,
-            is_active=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        db.session.add(new_class)
-        db.session.commit()
-
-        return jsonify({'message': 'Class added successfully', 'class': new_class.to_dict()}), 201
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': 'Failed to add class', 'details': str(e)}), 500
 
 # Get all active classes for a school
 @school_bp.route('/<int:school_id>/classes', methods=['GET'])

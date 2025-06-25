@@ -163,7 +163,6 @@ const LoginPage = () => {
     }
   };
   
-
   const handleTeacherLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -177,64 +176,42 @@ const LoginPage = () => {
       }
   
       const payload = {
-        school_id: teacherForm.schoolId,
-        password: teacherForm.password
+        school_id: parseInt(teacherForm.schoolId.trim(), 10),
+        password: teacherForm.password.trim()
       };
   
-      // Add identifier based on type
       if (teacherForm.identifierType === 'tsc') {
-        if (!/^TSC\d{6}$/i.test(teacherForm.identifier)) {
-          throw new Error('TSC number must be in format TSC123456');
-        }
-        payload.tsc_number = teacherForm.identifier.toUpperCase();
+        payload.tsc_number = teacherForm.identifier.trim().toUpperCase();
       } else {
-        if (!/^\d{6,12}$/.test(teacherForm.identifier)) {
-          throw new Error('National ID must be 6-12 digits');
-        }
-        payload.national_id = teacherForm.identifier;
+        payload.national_id = teacherForm.identifier.trim();
       }
   
       const response = await fetch(`${API_BASE_URL}/auth/teacher/login`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          // Remove X-Requested-With if not needed
-        },
-        body: JSON.stringify(payload),
-        credentials: 'include' // Only if using cookies/sessions
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
   
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Login failed. Please check your credentials.');
-      }
-  
       const responseData = await response.json();
-      
-      // Store token and user data
-      localStorage.setItem('access_token', responseData.access_token);
-      localStorage.setItem('user', JSON.stringify(responseData.user));
-      
-      // Redirect based on password change requirement
-      if (responseData.user?.must_change_password) {
-        navigate('/change-password', { state: { forceChange: true } });
-      } else {
-        navigate('/teacher/dashboard');
+  
+      if (!response.ok) {
+        const errorMsg = responseData.error || 'Login failed';
+        const hint = responseData.hint ? ` (${responseData.hint})` : '';
+        throw new Error(`${errorMsg}${hint}`);
       }
   
-      setSuccess('Login successful! Redirecting...');
+      // 🔁 Use shared logic
+      handleLoginSuccess(responseData, 'teacher');
   
     } catch (err) {
-      console.error('Login error:', err);
       setError(err.message);
-      
-      // Auto-dismiss error after 5 seconds
-      setTimeout(() => setError(''), 5000);
     } finally {
       setLoading(false);
     }
-  };
-
+  };  
+  
+  
+  
   const switchTab = (tab) => {
     setActiveTab(tab);
     setError('');

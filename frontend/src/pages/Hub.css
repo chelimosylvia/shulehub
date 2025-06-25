@@ -1,0 +1,119 @@
+/* Hub.css – unified styles for StudentHub & TeacherHub */
+
+/* ────────── Generic resets */
+* { box-sizing: border-box; }
+body, html { margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+
+/* ────────── Login Overlay */
+.login-overlay {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: rgba(0, 0, 0, 0.05);
+}
+.login-box {
+  background: #fff;
+  padding: 2.5rem 2rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  width: 320px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+.login-box h2 { margin-top: 0; font-size: 1.4rem; }
+.login-box form { display: flex; flex-direction: column; gap: .8rem; margin-top: 1rem; }
+.login-box input, .login-box select {
+  padding: .55rem .8rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: .95rem;
+}
+.login-box button { padding: .55rem 1rem; border: none; cursor: pointer; border-radius: 4px; background: #007bff; color:#fff; font-weight: 500; }
+.login-box button[disabled] { opacity: .6; cursor: default; }
+.login-box .error { color: crimson; font-size: .9rem; margin-top: .6rem; }
+
+/* ────────── Hub Shell */
+.hub-wrapper { padding: 1.2rem 1.5rem; }
+.hub-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e5e5e5;
+  padding-bottom: .6rem;
+}
+.hub-header h1 { margin: 0; font-size: 1.4rem; }
+.hub-header button { background: #dc3545; border: none; color:#fff; padding:.4rem .8rem; border-radius:4px; cursor:pointer; }
+
+/* ────────── Tabs */
+.tab-bar {
+  display: flex;
+  gap: .4rem;
+  margin: 1rem 0;
+}
+.tab-bar button {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .45rem .8rem;
+  font-size: .9rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  background: #fafafa;
+  cursor: pointer;
+}
+.tab-bar button.active {
+  background: #007bff;
+  color: #fff;
+  border-color: #007bff;
+}
+
+/* ────────── Content */
+.tab-content h2 { margin-top: 0; font-size: 1.2rem; }
+.tab-content { line-height: 1.5; }
+
+/* Lists */
+.tab-content > div { margin-bottom: 1rem; }
+
+/* Links */
+.tab-content a { color:#007bff; text-decoration: none; }
+.tab-content a:hover { text-decoration: underline; }
+
+/* ────────── Cards & grids */
+.resource-card, .banner-card, .class-card, .forum-card, .tutor-card, .competition-card {
+  border: 1px solid #e1e1e1;
+  border-radius: 6px;
+  padding: .8rem 1rem;
+  background:#fff;
+  margin-bottom: .8rem;
+}
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.subject-tag, .level-tag, .status-badge {
+  font-size: .75rem;
+  padding: .15rem .45rem;
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+.pinned { border-left: 4px solid gold; }
+
+/* Buttons inside cards */
+.download-button, .join-button, .join-competition-button, .contact-button {
+  display: inline-flex; align-items: center;
+  gap: .35rem; margin-top: .6rem; padding: .4rem .65rem;
+  border: 1px solid #007bff; color:#007bff; border-radius: 4px; font-size: .85rem; text-decoration: none;
+}
+.download-button:hover, .join-button:hover, .join-competition-button:hover, .contact-button:hover { background:#007bff; color:#fff; }
+
+/* Forms */
+.upload-form, .create-form { display: flex; flex-direction: column; gap: .75rem; max-width: 420px; }
+.upload-form input, .create-form input, .create-form textarea, .create-form select {
+  padding:.5rem .8rem; border: 1px solid #ccc; border-radius:4px; font-size:.95rem;
+}
+.upload-form button, .create-form button {
+  padding:.55rem .9rem; border:none; border-radius:4px; background:#28a745; color:#fff; cursor:pointer;
+}
+
+/* Responsive tweaks */
+@media (min-width: 700px) {
+  .resource-card, .class-card { display:flex; justify-content:space-between; align-items: center; }
+}

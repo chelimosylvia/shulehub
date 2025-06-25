@@ -33,7 +33,7 @@ def create_app():
          origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
          supports_credentials=True,
          allow_headers=["Content-Type", "Authorization"],
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
 
     # Initialize extensions
     db.init_app(app)
@@ -65,6 +65,9 @@ def create_app():
         ('routes.dashboard_routes', 'dashboard_bp', '/api/schools'),
         ('routes.student_dashboard', 'student_bp', '/api/schools'),
         ('routes.teacher_dashboard', 'teacher_bp', '/api/schools'),
+        ('routes.hub_routes', 'hub_bp', '/api/hub'),
+        ('routes.homepage_routes', 'homepage_bp', '/api/homepage'),
+
     ]
     
     for module_name, blueprint_name, url_prefix in route_modules:
@@ -97,7 +100,7 @@ def create_app():
         if request.method == "OPTIONS":
             res = app.make_default_options_response()
             res.headers['Access-Control-Allow-Origin'] = 'http://localhost:5173'
-            res.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            res.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, PATCH, OPTIONS'
             res.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
             res.headers['Access-Control-Allow-Credentials'] = 'true'
             return res
