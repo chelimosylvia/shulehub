@@ -1,10 +1,4 @@
 /* LoginPage.css */
-
-body {
-    margin: 0;
-    font-family: 'Poppins', sans-serif;
-    background-color: #f5f7fa;
-  }
   
   .login-container {
     display: flex;
