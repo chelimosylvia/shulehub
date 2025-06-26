@@ -4,6 +4,7 @@ from extensions import db
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
+import json
 
 teacher_subject = db.Table('teacher_subject',
     db.Column('teacher_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
@@ -677,46 +678,79 @@ class Competition(db.Model):
     __tablename__ = 'competitions'
     
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(255), nullable=False)
+    title = db.Column(db.String(120), nullable=False)
     description = db.Column(db.Text, nullable=False)
     host_school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     deadline = db.Column(db.DateTime, nullable=False)
-    status = db.Column(db.String(20), default='active')  # active, completed, cancelled
-    max_participants = db.Column(db.Integer, nullable=True)
-    prize_description = db.Column(db.Text, nullable=True)
-    rules = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default='active')
+    max_participants = db.Column(db.Integer)
+    prize_description = db.Column(db.Text)
+    rules = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    subject = db.Column(db.String(100)) 
+
+    # Quiz-related fields
+    has_quiz = db.Column(db.Boolean, default=False)
+    time_limit = db.Column(db.Integer)  # in minutes
+    proctoring_enabled = db.Column(db.Boolean, default=False)
+    screen_sharing_required = db.Column(db.Boolean, default=False)
+    show_individual_rankings = db.Column(db.Boolean, default=True)
     
     # Relationships
     host_school = db.relationship('School', backref='hosted_competitions')
     created_by = db.relationship('User', backref='created_competitions')
-    participants = db.relationship('CompetitionParticipant', backref='competition', cascade='all, delete-orphan')
+    participants = db.relationship('CompetitionParticipant', backref='competition', lazy='dynamic')
+    quiz_questions = db.relationship('QuizQuestion', backref='competition', lazy='dynamic', 
+                                   order_by='QuizQuestion.sequence')  # Note the relationship name
     
-    @property
-    def participants_count(self):
-        return len(self.participants)
+    def to_dict(self, current_user_id=None):
+     data = {
+        "id": self.id,
+        "title": self.title,
+        "description": self.description,
+        "deadline": self.deadline.isoformat(),
+        "status": self.status,
+        "host_school": self.host_school.name if self.host_school else None,
+        "max_participants": self.max_participants,
+        "has_quiz": self.has_quiz,
+        "quiz_questions_count": len(self.quiz_questions) if self.has_quiz else 0,
+        "proctoring_enabled": self.proctoring_enabled,
+        "screen_sharing_required": self.screen_sharing_required,
+        "time_limit": self.time_limit,
+        "subject": self.subject,
+    }
+     if current_user_id:
+         user = User.query.get(current_user_id)
+         data["is_participant"] = CompetitionParticipant.query.filter_by(
+             competition_id=self.id,
+             school_id=user.school_id
+         ).first() is not None
+     return data    
+
+
+class QuizQuestion(db.Model):
+    __tablename__ = 'quiz_questions'  # Must match exactly
     
-    @property
-    def leaderboard(self):
-        return sorted(self.participants, key=lambda x: x.score or 0, reverse=True)
+    id = db.Column(db.Integer, primary_key=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competitions.id'), nullable=False)
+    question_text = db.Column(db.Text, nullable=False)
+    question_type = db.Column(db.String(50), nullable=False)  # 'multiple_choice', 'short_answer', 'math_expression'
+    options = db.Column(db.JSON)  # For multiple choice
+    correct_answer = db.Column(db.Text, nullable=False)
+    points = db.Column(db.Integer, default=1)
+    sequence = db.Column(db.Integer)
     
     def to_dict(self):
         return {
             'id': self.id,
-            'title': self.title,
-            'description': self.description,
-            'host_school': self.host_school.name,
-            'created_by': f"{self.created_by.first_name} {self.created_by.last_name}",
-            'deadline': self.deadline.isoformat(),
-            'status': self.status,
-            'participants_count': self.participants_count,
-            'max_participants': self.max_participants,
-            'prize_description': self.prize_description,
-            'rules': self.rules,
-            'created_at': self.created_at.isoformat(),
-            'leaderboard': [p.to_dict() for p in self.leaderboard[:10]]  # Top 10
+            'question_text': self.question_text,
+            'question_type': self.question_type,
+            'options': self.options,
+            'correct_answer': self.correct_answer,
+            'points': self.points,
+            'sequence': self.sequence
         }
 
 class CompetitionParticipant(db.Model):
@@ -726,29 +760,30 @@ class CompetitionParticipant(db.Model):
     competition_id = db.Column(db.Integer, db.ForeignKey('competitions.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     teacher_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    score = db.Column(db.Integer, default=0)
-    submission_url = db.Column(db.String(500), nullable=True)
-    submission_text = db.Column(db.Text, nullable=True)
-    submitted_at = db.Column(db.DateTime, nullable=True)
-    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    submission_url = db.Column(db.String(255))
+    submission_text = db.Column(db.Text)
+    submitted_at = db.Column(db.DateTime)
+    
+    # Quiz-specific fields
+    quiz_score = db.Column(db.Float)
+    quiz_submitted_at = db.Column(db.DateTime)
+    quiz_answers = db.Column(db.Text)  # Store as JSON string
     
     # Relationships
-    school = db.relationship('School', backref='competition_participations')
-    teacher = db.relationship('User', backref='competition_participations')
-    
-    # Unique constraint to prevent duplicate participation
-    __table_args__ = (db.UniqueConstraint('competition_id', 'school_id', name='unique_school_competition'),)
+    school = db.relationship('School')
+    teacher = db.relationship('User')
     
     def to_dict(self):
         return {
             'id': self.id,
-            'school': self.school.name,
-            'teacher': f"{self.teacher.first_name} {self.teacher.last_name}",
-            'score': self.score,
-            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
-            'joined_at': self.joined_at.isoformat()
+            'competition_id': self.competition_id,
+            'school_id': self.school_id,
+            'teacher_id': self.teacher_id,
+            'quiz_score': self.quiz_score,
+            'quiz_submitted_at': self.quiz_submitted_at.isoformat() + 'Z' if self.quiz_submitted_at else None,
+            'submitted_at': self.submitted_at.isoformat() + 'Z' if self.submitted_at else None
         }
-
+        
 class TutoringSession(db.Model):
     __tablename__ = 'tutoring_sessions'
     

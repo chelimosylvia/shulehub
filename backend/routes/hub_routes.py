@@ -2,8 +2,17 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime, timedelta, timezone
 from extensions import db
-from models import User, GeneralResource, Banner, LiveClass, Forum, ForumReply , Competition , CompetitionParticipant , TutoringSession , TutoringEnrollment 
+from models import User, GeneralResource, Banner, LiveClass, Forum, ForumReply , Competition , CompetitionParticipant , TutoringSession , TutoringEnrollment, School, QuizQuestion
 from sqlalchemy import or_, and_, desc
+from sqlalchemy.orm import configure_mappers
+import json
+from sqlalchemy import func
+
+try:
+    configure_mappers()
+except:
+    pass
+
 
 hub_bp = Blueprint("hub", __name__, url_prefix="/api/hub")
 
@@ -52,6 +61,32 @@ def serialize_class(c: LiveClass) -> dict:
         "school": t.school.name if t and t.school else "Unknown",
     }
 
+def simplify_math_expression(expr):
+    """
+    Basic math expression normalization for comparison.
+    For production use, consider using a proper math library like SymPy.
+    """
+    if not expr:
+        return ""
+    
+    # Basic normalization
+    expr = expr.replace(" ", "").lower()
+    
+    # Replace common math operators
+    replacements = {
+        "\\times": "*",
+        "\\div": "/",
+        "\\cdot": "*",
+        "\\left": "",
+        "\\right": "",
+        "(": "",
+        ")": ""
+    }
+    
+    for old, new in replacements.items():
+        expr = expr.replace(old, new)
+    
+    return expr
 # -----------------------------------------------------------
 # Routes
 # -----------------------------------------------------------
@@ -236,38 +271,61 @@ def create_forum_reply(forum_id):           # ← accept the parameter
 @hub_bp.route('/competitions', methods=['GET'])
 @jwt_required()
 def get_competitions():
-    """Get all competitions"""
+    """Get all competitions with participation + leaderboard info"""
     try:
-        status_filter = request.args.get('status', '')
+        # Query parameters
+        status_filter = request.args.get('status', '').lower()
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
-        
+
+        user_id = int(get_jwt_identity())
+        user = User.query.get_or_404(user_id)
+        school_id = user.school_id
+
+        # Base query
         query = Competition.query
-        
-        if status_filter:
+
+        if status_filter in ('active', 'completed'):
             query = query.filter_by(status=status_filter)
-        
+
         # Update expired competitions
-        expired_competitions = query.filter(
-            and_(Competition.deadline < datetime.utcnow(), Competition.status == 'active')
+        expired = query.filter(
+            and_(
+                Competition.deadline < datetime.utcnow(),
+                Competition.status == 'active'
+            )
         ).all()
-        
-        for comp in expired_competitions:
+
+        for comp in expired:
             comp.status = 'completed'
-        
-        if expired_competitions:
+
+        if expired:
             db.session.commit()
-        
-        competitions = query.order_by(desc(Competition.created_at)).paginate(
+
+        # Paginate
+        competitions = query.order_by(desc(Competition.deadline)).paginate(
             page=page, per_page=per_page, error_out=False
         )
-        
-        return jsonify([comp.to_dict() for comp in competitions.items]), 200
-        
+
+        # Build response
+        competition_dicts = []
+        for comp in competitions.items:
+            comp_data = comp.to_dict(current_user_id=user_id)
+
+            # Add leaderboard if completed
+            if comp.status == 'completed':
+                comp_data['leaderboard'] = get_competition_leaderboard(comp.id)
+                if getattr(comp, 'show_individual_rankings', False):
+                    comp_data['individual_leaderboard'] = get_individual_leaderboard(comp.id)
+
+            competition_dicts.append(comp_data)
+
+        return jsonify(competition_dicts), 200
+
     except Exception as e:
         current_app.logger.error(f"Error fetching competitions: {str(e)}")
         return jsonify({'error': 'Failed to fetch competitions'}), 500
-
+    
 @hub_bp.route('/competitions', methods=['POST'])
 @jwt_required()
 def create_competition():
@@ -384,6 +442,166 @@ def submit_competition_entry(competition_id):   # ← parameter here too
         current_app.logger.error(f"Error submitting entry: {e}")
         return jsonify({'error': 'Failed to submit entry'}), 500
     
+@hub_bp.route('/competitions/<int:competition_id>/quiz', methods=['GET'])
+@jwt_required()
+def get_competition_quiz(competition_id):
+    try:
+        user_id = int(get_jwt_identity())
+        competition = Competition.query.get_or_404(competition_id)
+        
+        # Check if user's school is participating
+        participant = CompetitionParticipant.query.filter_by(
+            competition_id=competition_id,
+            school_id=User.query.get(user_id).school_id
+        ).first_or_404()
+        
+        if not competition.has_quiz:
+            return jsonify({'error': 'This competition does not have a quiz'}), 400
+            
+        questions = competition.quiz_questions.order_by(QuizQuestion.sequence).all()
+        
+        return jsonify({
+            'questions': [q.to_dict() for q in questions]
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error fetching quiz: {str(e)}")
+        return jsonify({'error': 'Failed to fetch quiz'}), 500
+
+@hub_bp.route('/competitions/<int:competition_id>/submit-quiz', methods=['POST'])
+@jwt_required()
+def submit_competition_quiz(competition_id):
+    try:
+        user_id = int(get_jwt_identity())
+        user = User.query.get_or_404(user_id)
+        competition = Competition.query.get_or_404(competition_id)
+        
+        # Check if user's school is participating
+        participant = CompetitionParticipant.query.filter_by(
+            competition_id=competition_id,
+            school_id=user.school_id
+        ).first_or_404()
+        
+        if not competition.has_quiz:
+            return jsonify({'error': 'This competition does not have a quiz'}), 400
+            
+        data = request.get_json()
+        answers = data.get('answers', {})
+        
+        # Calculate score
+        questions = competition.quiz_questions.all()
+        total_score = 0
+        
+        for question in questions:
+            if str(question.id) in answers:
+                user_answer = answers[str(question.id)]
+                if question.question_type == 'multiple_choice':
+                    if user_answer == question.correct_answer:
+                        total_score += question.points
+                elif question.question_type == 'math_expression':
+                    # This would need a proper math expression comparison library
+                    if simplify_math_expression(user_answer) == simplify_math_expression(question.correct_answer):
+                        total_score += question.points
+                else:  # short answer
+                    if user_answer.lower().strip() == question.correct_answer.lower().strip():
+                        total_score += question.points
+        
+        # Update participant record
+        participant.quiz_score = total_score
+        participant.quiz_submitted_at = datetime.utcnow()
+        participant.quiz_answers = json.dumps(answers)
+        db.session.commit()
+        
+        # Return updated leaderboard
+        return jsonify({
+            'score': total_score,
+            'total_possible': sum(q.points for q in questions),
+            'leaderboard': get_competition_leaderboard(competition_id),
+            'individual_leaderboard': get_individual_leaderboard(competition_id) if competition.show_individual_rankings else None
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error submitting quiz: {str(e)}")
+        return jsonify({'error': 'Failed to submit quiz'}), 500
+
+def get_competition_leaderboard(competition_id):
+    competition = Competition.query.get_or_404(competition_id)
+    
+    # School rankings
+    school_rankings = db.session.query(
+        School.id.label('school_id'),
+        School.name.label('school_name'),
+        func.sum(CompetitionParticipant.quiz_score).label('total_score'),
+        func.count(CompetitionParticipant.id).label('participant_count')
+    ).join(
+        CompetitionParticipant.school
+    ).filter(
+        CompetitionParticipant.competition_id == competition_id,
+        CompetitionParticipant.quiz_score.isnot(None)
+    ).group_by(
+        School.id
+    ).order_by(
+        func.sum(CompetitionParticipant.quiz_score).desc()
+    ).all()
+    
+    return [{
+        'school_id': r.school_id,
+        'school_name': r.school_name,
+        'score': float(r.total_score) if r.total_score else 0,
+        'participant_count': r.participant_count
+    } for r in school_rankings]
+
+def get_individual_leaderboard(competition_id):
+    # Individual rankings
+    individual_rankings = db.session.query(
+        User.id.label('user_id'),
+        User.first_name,
+        User.last_name,
+        School.id.label('school_id'),
+        School.name.label('school_name'),
+        CompetitionParticipant.quiz_score.label('score')
+    ).join(
+        CompetitionParticipant.user
+    ).join(
+        User.school
+    ).filter(
+        CompetitionParticipant.competition_id == competition_id,
+        CompetitionParticipant.quiz_score.isnot(None)
+    ).order_by(
+        CompetitionParticipant.quiz_score.desc()
+    ).all()
+    
+    return [{
+        'user_id': r.user_id,
+        'user_name': f"{r.first_name} {r.last_name}",
+        'school_id': r.school_id,
+        'school_name': r.school_name,
+        'score': float(r.score) if r.score else 0
+    } for r in individual_rankings]
+
+@hub_bp.route('/competitions/<int:competition_id>', methods=['GET'])
+@jwt_required()
+def get_competition(competition_id):
+    """Get a single competition with full details"""
+    try:
+        user_id = int(get_jwt_identity())
+        competition = Competition.query.get_or_404(competition_id)
+        
+        response_data = competition.to_dict(current_user_id=user_id)
+        
+        # Add leaderboard data if competition is completed
+        if competition.status == 'completed':
+            response_data['leaderboard'] = get_competition_leaderboard(competition_id)
+            if competition.show_individual_rankings:
+                response_data['individual_leaderboard'] = get_individual_leaderboard(competition_id)
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error fetching competition {competition_id}: {str(e)}")
+        return jsonify({'error': 'Failed to fetch competition details'}), 500
+
 # ========================================
 # TUTORING ROUTES
 # ========================================

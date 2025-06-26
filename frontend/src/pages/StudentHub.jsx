@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { BookOpen, MessageCircle, Users, Trophy, RotateCw, Video, Download } from 'lucide-react';
+import { BookOpen, MessageCircle, Users, Trophy, Video, Download } from 'lucide-react';
+import EnhancedCompetitionCard from './EnhancedCompetitionCard';
 import './Hub.css';
 
 const API_ROOT = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
@@ -27,10 +28,7 @@ export default function StudentHub({ user, token, logout }) {
     thread_id: null
   });
   
-  const [competitionEntry, setCompetitionEntry] = useState({
-    competition_id: null,
-    submission: ''
-  });
+const [competitionEntry, setCompetitionEntry] = useState({});
 
   /* Fetch all student-accessible content */
   const fetchAllData = async () => {
@@ -84,36 +82,6 @@ export default function StudentHub({ user, token, logout }) {
       setForumReply({ content: '', thread_id: null });
     } catch (err) {
       console.error('Error posting reply:', err);
-    }
-  };
-
-  const joinCompetition = async (competitionId) => {
-    try {
-      await axios.post(`${HUB_API}/competitions/${competitionId}/join`, {}, auth);
-      const { data } = await axios.get(`${HUB_API}/competitions`, auth);
-      setCompetitions(data);
-      alert('Successfully joined the competition!');
-    } catch (err) {
-      console.error('Error joining competition:', err);
-      alert(err.response?.data?.error || 'Failed to join competition');
-    }
-  };
-
-  const submitCompetitionEntry = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post(
-        `${HUB_API}/competitions/${competitionEntry.competition_id}/submit`,
-        { submission_text: competitionEntry.submission },
-        auth
-      );
-      const { data } = await axios.get(`${HUB_API}/competitions`, auth);
-      setCompetitions(data);
-      setCompetitionEntry({ competition_id: null, submission: '' });
-      alert('Entry submitted successfully!');
-    } catch (err) {
-      console.error('Error submitting entry:', err);
-      alert(err.response?.data?.error || 'Failed to submit entry');
     }
   };
 
@@ -343,62 +311,21 @@ export default function StudentHub({ user, token, logout }) {
           
           <div className="competition-grid">
             {competitions.map(comp => (
-              <div key={comp.id} className="competition-card">
-                <div className="comp-header">
-                  <h3>{comp.title}</h3>
-                  <span className={`status ${comp.status}`}>
-                    {comp.status === 'active' ? 'Active' : 'Completed'}
-                  </span>
-                </div>
-                <div className="comp-details">
-                  <p><strong>Subject:</strong> {comp.subject}</p>
-                  <p><strong>Deadline:</strong> {new Date(comp.deadline).toLocaleString()}</p>
-                  <p><strong>Host:</strong> {comp.host_school}</p>
-                </div>
-                <p className="comp-description">{comp.description}</p>
-                
-                <div className="comp-actions">
-                  {comp.status === 'active' && (
-                    <>
-                      {comp.is_participant ? (
-                        <form onSubmit={submitCompetitionEntry}>
-                          <textarea
-                            placeholder="Your submission"
-                            value={competitionEntry.competition_id === comp.id ? competitionEntry.submission : ''}
-                            onChange={(e) => setCompetitionEntry({
-                              submission: e.target.value,
-                              competition_id: comp.id
-                            })}
-                            required
-                          />
-                          <button type="submit">Submit Entry</button>
-                        </form>
-                      ) : (
-                        <button 
-                          onClick={() => joinCompetition(comp.id)}
-                          className="join-btn"
-                        >
-                          Join Competition
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-                
-                {/* Leaderboard */}
-                {comp.leaderboard && (
-                  <div className="leaderboard">
-                    <h4>Leaderboard</h4>
-                    {comp.leaderboard.map((entry, index) => (
-                      <div key={entry.id} className="leaderboard-entry">
-                        <span className="rank">#{index + 1}</span>
-                        <span className="school">{entry.school}</span>
-                        <span className="score">{entry.score} pts</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+<EnhancedCompetitionCard
+  key={comp.id}
+  comp={comp}
+  user={user}
+  auth={auth}
+  onUpdate={fetchAllData}
+  competitionEntry={competitionEntry[comp.id] || { competition_id: comp.id, submission: '' }}
+  setCompetitionEntry={(entry) =>
+    setCompetitionEntry((prev) => ({
+      ...prev,
+      [entry.competition_id]: entry
+    }))
+  }
+/>
+
             ))}
           </div>
         </div>

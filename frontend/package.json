@@ -11,9 +11,13 @@
   },
   "dependencies": {
     "axios": "^1.9.0",
+    "better-react-mathjax": "^2.3.0",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^0.513.0",
+    "mathlive": "^0.105.3",
     "react": "^19.1.0",
+    "react-countdown": "^2.3.6",
+    "react-countdown-circle-timer": "^3.2.1",
     "react-dom": "^19.1.0",
     "react-feather": "^2.0.10",
     "react-router-dom": "^6.30.1",

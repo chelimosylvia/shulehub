@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BookOpen, Upload, Video, MessageSquare, Trophy, Users } from 'lucide-react';
+import EnhancedCompetitionCard from './EnhancedCompetitionCard'; // Adjust path if needed
 import './Hub.css';
 
 /* -------------------------------------------------------
@@ -599,50 +600,41 @@ const submitTutoringSession = async (e) => {
 
           {/* Competitions list */}
           <div className="competitions-list">
-            <h3>Active Competitions</h3>
-            {competitions.length > 0 ? (
-              competitions.map((comp) => (
-                <div key={comp.id} className="competition-item">
-                  <div className="competition-header">
-                    <h4>{comp.title}</h4>
-                    <span className={`status ${comp.status}`}>
-                      {comp.status === 'active' ? '🟢 Active' : '🔴 Completed'}
-                    </span>
-                  </div>
-                  <p>{comp.description}</p>
-                  <div className="competition-meta">
-                    <span>Host: {comp.host_school}</span>
-                    <span>Deadline: {new Date(comp.deadline).toLocaleString()}</span>
-                    <span>Participants: {comp.participants_count}</span>
-                  </div>
-                  {comp.status === 'active' && (
-                    <button 
-                      onClick={() => joinCompetition(comp.id)}
-                      className="participate-button"
-                    >
-                      Participate
-                    </button>
-                  )}
-                  
-                  {/* Leaderboard */}
-                  {comp.leaderboard && comp.leaderboard.length > 0 && (
-                    <div className="leaderboard">
-                      <h5>Leaderboard</h5>
-                      {comp.leaderboard.map((entry, index) => (
-                        <div key={entry.id} className="leaderboard-entry">
-                          <span className="rank">#{index + 1}</span>
-                          <span className="participant">{entry.school}</span>
-                          <span className="score">{entry.score} pts</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
-            ) : (
-              <p>No competitions available. Host the first one!</p>
-            )}
-          </div>
+  <h3>Active Competitions</h3>
+{competitions.length > 0 ? (
+  competitions.map((comp) => (
+    <div key={comp.id} className="competition-card">
+      <div className="comp-header">
+        <h3>{comp.title}</h3>
+        <span className={`status ${comp.status}`}>
+          {comp.status === 'active' ? '🟢 Active' : '🔴 Completed'}
+        </span>
+      </div>
+
+      <p><strong>Subject:</strong> {comp.subject || 'N/A'}</p>
+      <p><strong>Deadline:</strong> {new Date(comp.deadline).toLocaleString()}</p>
+      <p><strong>Host:</strong> {comp.host_school}</p>
+      <p>{comp.description}</p>
+
+      {comp.status === 'completed' && comp.leaderboard && (
+        <div className="leaderboard">
+          <h4>Top Schools</h4>
+          <ol>
+            {comp.leaderboard.slice(0, 5).map((entry, i) => (
+              <li key={i}>
+                {entry.school_name} — {entry.score} pts
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  ))
+) : (
+  <p>No competitions available. Host the first one!</p>
+)}
+</div>
+
         </div>
       )}
 
